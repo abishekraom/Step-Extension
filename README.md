@@ -70,3 +70,10 @@
 - Type question bypassed
 - Kinda improved some stuff but stuff might be broken
 - New secret added
+
+### Changelogs V3.5
+
+- Automated Every Single question type completly (yes multi/dropdown ones are now done)
+- Small Bug fixes
+- Scoped the extension to Step only.
+- Added Update Notification

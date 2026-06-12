@@ -1,1 +1,45 @@
-const _0x26a93a=_0x4378;function _0x668e(){const _0x177c45=['addEventListener','OFF','41pAlLeS','local','Extension\x20is\x20now\x20','toggleButton','753928KKHTGw','65XlhJXA','56118eoYypf','70565HwOTir','302980GuXdsN','1200ugkbSq','121707uUUJvz','3457530TxhSKJ','136BciafP','isEnabled','getElementById','storage','2638437eZYMXq'];_0x668e=function(){return _0x177c45;};return _0x668e();}function _0x4378(_0x3fe0b7,_0x18f0a1){const _0x668e97=_0x668e();return _0x4378=function(_0x43789b,_0x385c3d){_0x43789b=_0x43789b-0xa7;let _0x4681f9=_0x668e97[_0x43789b];return _0x4681f9;},_0x4378(_0x3fe0b7,_0x18f0a1);}(function(_0x25ebba,_0x489999){const _0x2ff833=_0x4378,_0x5dc5df=_0x25ebba();while(!![]){try{const _0x3fae83=parseInt(_0x2ff833(0xae))/0x1*(parseInt(_0x2ff833(0xb4))/0x2)+parseInt(_0x2ff833(0xab))/0x3+-parseInt(_0x2ff833(0xb6))/0x4*(parseInt(_0x2ff833(0xb3))/0x5)+parseInt(_0x2ff833(0xb9))/0x6+parseInt(_0x2ff833(0xb2))/0x7+parseInt(_0x2ff833(0xa7))/0x8*(-parseInt(_0x2ff833(0xb8))/0x9)+-parseInt(_0x2ff833(0xb7))/0xa*(parseInt(_0x2ff833(0xb5))/0xb);if(_0x3fae83===_0x489999)break;else _0x5dc5df['push'](_0x5dc5df['shift']());}catch(_0x864f6b){_0x5dc5df['push'](_0x5dc5df['shift']());}}}(_0x668e,0xb2189),document[_0x26a93a(0xa9)](_0x26a93a(0xb1))[_0x26a93a(0xac)]('click',()=>{const _0xb5c0dc=_0x26a93a;chrome[_0xb5c0dc(0xaa)][_0xb5c0dc(0xaf)]['get'](_0xb5c0dc(0xa8),_0x131c05=>{const _0x30c061=_0xb5c0dc,_0x261134=!_0x131c05[_0x30c061(0xa8)];chrome[_0x30c061(0xaa)]['local']['set']({'isEnabled':_0x261134},()=>{const _0x2f4d86=_0x30c061;alert(_0x2f4d86(0xb0)+(_0x261134?'ON':_0x2f4d86(0xad)));});});}));
+const toggleButton = document.getElementById('toggleButton');
+const versionText = document.getElementById('versionText');
+const updateNotice = document.getElementById('updateNotice');
+const updateMessage = document.getElementById('updateMessage');
+const updateLink = document.getElementById('updateLink');
+
+const currentVersion = chrome.runtime.getManifest().version;
+versionText.textContent = `Installed version: V${currentVersion}`;
+
+function renderToggle(isEnabled) {
+  toggleButton.textContent = isEnabled ? 'Turn Extension OFF' : 'Turn Extension ON';
+}
+
+chrome.storage.local.get({ isEnabled: true }, ({ isEnabled }) => {
+  renderToggle(isEnabled);
+});
+
+toggleButton.addEventListener('click', async () => {
+  const { isEnabled = true } = await chrome.storage.local.get('isEnabled');
+  const nextEnabled = !isEnabled;
+  await chrome.storage.local.set({ isEnabled: nextEnabled });
+  renderToggle(nextEnabled);
+  alert(`Extension is now ${nextEnabled ? 'ON' : 'OFF'}`);
+});
+
+function renderUpdateStatus(status) {
+  if (!status?.updateAvailable) {
+    updateNotice.style.display = 'none';
+    return;
+  }
+
+  updateMessage.textContent =
+    `Version V${status.latestVersion} is available. Download it and replace your current extension files.`;
+  updateLink.href = status.releaseUrl || updateLink.href;
+  updateNotice.style.display = 'block';
+}
+
+chrome.runtime.sendMessage({ type: 'CHECK_FOR_UPDATE' }, response => {
+  if (chrome.runtime.lastError) {
+    console.warn('[StepExt] Could not request update status:', chrome.runtime.lastError.message);
+    return;
+  }
+
+  renderUpdateStatus(response);
+});
