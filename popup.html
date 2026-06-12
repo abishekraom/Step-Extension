@@ -13,12 +13,38 @@
         button {
             padding: 10px;
             font-size: 16px;
+            width: 100%;
+        }
+        #versionText {
+            color: #555;
+            font-size: 12px;
+            margin: -10px 0 12px;
+        }
+        #updateNotice {
+            display: none;
+            margin-top: 12px;
+            padding: 10px;
+            border: 1px solid #dc3545;
+            background: #fff3f3;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        #updateNotice a {
+            color: #b02a37;
+            font-weight: bold;
         }
     </style>
 </head>
 <body>
     <h2>GET Step Answer</h2>
+    <div id="versionText"></div>
     <button id="toggleButton">Toggle ON/OFF</button>
+    <div id="updateNotice">
+        <div id="updateMessage"></div>
+        <a id="updateLink" href="https://github.com/abishekraom/Step-Extension/releases" target="_blank" rel="noopener noreferrer">
+            Download from GitHub Releases
+        </a>
+    </div>
     <script src="popup.js"></script>
 </body>
 </html>

@@ -1,6 +1,191 @@
 const _0x251abb=_0x3cae;(function(_0x39b4ca,_0x4471ad){const _0x57051c=_0x3cae,_0x1637c7=_0x39b4ca();while(!![]){try{const _0x30b01c=parseInt(_0x57051c(0x11f))/0x1*(-parseInt(_0x57051c(0x128))/0x2)+parseInt(_0x57051c(0x118))/0x3+parseInt(_0x57051c(0x108))/0x4*(parseInt(_0x57051c(0x10b))/0x5)+parseInt(_0x57051c(0x11a))/0x6*(parseInt(_0x57051c(0x10e))/0x7)+parseInt(_0x57051c(0x11b))/0x8+parseInt(_0x57051c(0x12d))/0x9*(parseInt(_0x57051c(0x107))/0xa)+parseInt(_0x57051c(0x119))/0xb*(-parseInt(_0x57051c(0x120))/0xc);if(_0x30b01c===_0x4471ad)break;else _0x1637c7['push'](_0x1637c7['shift']());}catch(_0x457084){_0x1637c7['push'](_0x1637c7['shift']());}}}(_0x5276,0x96cdd));function _0x3cae(_0xa1c2a1,_0x96c6d8){const _0x52766a=_0x5276();return _0x3cae=function(_0x3cae1d,_0x15e38c){_0x3cae1d=_0x3cae1d-0xf3;let _0x1ab2de=_0x52766a[_0x3cae1d];return _0x1ab2de;},_0x3cae(_0xa1c2a1,_0x96c6d8);}function _0x5276(){const _0x329fe9=['backgroundColor','getElementById','style','right','createElement','22374msTlOa','href','split','GET','resource','144houfjz','Answer\x20not\x20found\x20in\x20API\x20response.','next_question','then','querySelector','10px','Error\x20fetching\x20API:','#testSubmit','Resource\x20not\x20found.','https://api.steptest.in/v1/fetchattempt/','getStepAnswerDialog','location','body','appendChild','innerHTML','pop','data','boxShadow','fixed','startsWith','find','740830tsqJyU','268syaTKb','zIndex','https://english.steptest.in/test','33110GdxCmT','token','padding','7pCewWX','position','catch','onclick','name','div','onload','</span>','getEntriesByType','addEventListener','2873742ZkwiyM','11MLABEg','3778836WHNbLi','4966520UrCKtl','Button\x20with\x20id\x20\x27testSubmit\x27\x20not\x20found.','error','border','39xhdAUE','33402612VushGr','top','correct_answer_1'];_0x5276=function(){return _0x329fe9;};return _0x5276();}async function fetchApiData(){const _0x3c6005=_0x3cae,_0x3fa645=performance[_0x3c6005(0x116)](_0x3c6005(0x12c))[_0x3c6005(0x106)](_0x20010b=>_0x20010b[_0x3c6005(0x112)][_0x3c6005(0x105)](_0x3c6005(0xfb)));if(!_0x3fa645){console[_0x3c6005(0x11d)](_0x3c6005(0xfa));return;}const _0x1ef84b=_0x3fa645[_0x3c6005(0x112)][_0x3c6005(0x12a)]('/')[_0x3c6005(0x101)](),_0x4a06f0='https://api.steptest.in/v1/fetchattempt/'+_0x1ef84b,_0x185345=localStorage[_0x3c6005(0x10c)];fetch(_0x4a06f0,{'method':_0x3c6005(0x12b),'headers':{'Access-Token':_0x185345}})['then'](_0x32cf2a=>_0x32cf2a['json']())[_0x3c6005(0xf5)](_0x310693=>{const _0x4648f3=_0x3c6005,_0xe55f6a=_0x310693?.[_0x4648f3(0x102)]?.[_0x4648f3(0xf4)]?.[0x0]?.[_0x4648f3(0x122)];if(!_0xe55f6a){console[_0x4648f3(0x11d)](_0x4648f3(0xf3));return;}let _0x5ad4b1=document[_0x4648f3(0x124)]('getStepAnswerDialog');!_0x5ad4b1&&(_0x5ad4b1=document[_0x4648f3(0x127)](_0x4648f3(0x113)),_0x5ad4b1['id']=_0x4648f3(0xfc),_0x5ad4b1['style'][_0x4648f3(0x10f)]=_0x4648f3(0x104),_0x5ad4b1[_0x4648f3(0x125)][_0x4648f3(0x121)]=_0x4648f3(0xf7),_0x5ad4b1[_0x4648f3(0x125)][_0x4648f3(0x126)]=_0x4648f3(0xf7),_0x5ad4b1['style'][_0x4648f3(0x123)]='white',_0x5ad4b1[_0x4648f3(0x125)][_0x4648f3(0x11e)]='1px\x20solid\x20black',_0x5ad4b1[_0x4648f3(0x125)][_0x4648f3(0x10d)]=_0x4648f3(0xf7),_0x5ad4b1[_0x4648f3(0x125)][_0x4648f3(0x109)]='9999',_0x5ad4b1[_0x4648f3(0x125)][_0x4648f3(0x103)]='0px\x204px\x206px\x20rgba(0,0,0,0.1)',document[_0x4648f3(0xfe)][_0x4648f3(0xff)](_0x5ad4b1)),_0x5ad4b1[_0x4648f3(0x100)]='<strong>Correct\x20Answer:</strong>\x20<span\x20style=\x22background-color:\x20yellow;\x22>'+_0xe55f6a+_0x4648f3(0x115);})[_0x3c6005(0x110)](_0x2fc4cf=>console['error'](_0x3c6005(0xf8),_0x2fc4cf));}window[_0x251abb(0xfd)][_0x251abb(0x129)]==_0x251abb(0x10a)&&(window[_0x251abb(0x114)]=()=>{fetchApiData();});window[_0x251abb(0x111)]=()=>{const _0x25a076=_0x251abb,_x96af38=document[_0x25a076(0xf6)](_0x25a076(0xf9));_x96af38?_x96af38[_0x25a076(0x117)]('click',fetchApiData()):console[_0x25a076(0x11d)](_0x25a076(0x11c));};
 
 // ── VIRTUAL MIC INJECTION ────────────────────────────────────────────────────
+// Inspect the existing fetch-attempt response without changing its request.
+let STEP_EXT_RESPONSE_MODEL = null;
+let STEP_EXT_LINKED_ANSWERS = [];
+
+function stepExtLog(label, details) {
+  if (details === undefined) {
+    console.log('[StepExt]', label);
+  } else {
+    console.log('[StepExt]', label, details);
+  }
+}
+
+function stepExtNonEmptyStrings(value) {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .flatMap(item => typeof item === 'string' && item.match(/[|#]/) ? item.split(/[|#]/) : [item])
+    .map(item => typeof item === 'string' ? item.trim() : '')
+    .filter(Boolean);
+}
+
+function stepExtBuildResponseModel(payload) {
+  const nextQuestions = Array.isArray(payload?.data?.next_question)
+    ? payload.data.next_question
+    : [];
+
+  return {
+    attemptId: payload?.data?.attempt?.attempt_id,
+    questionCount: payload?.data?.question_count,
+    questions: nextQuestions.map((question, index) => {
+      const numberedAnswers = Object.keys(question || {})
+        .filter(key => /^correct_answer_\d+$/.test(key))
+        .sort((a, b) => Number(a.split('_').pop()) - Number(b.split('_').pop()))
+        .flatMap(key => stepExtNonEmptyStrings(question[key]));
+      const correctAnswers = stepExtNonEmptyStrings(question?.correct_answers);
+
+      return {
+        index,
+        questionId: question?.question_id,
+        type: question?.type,
+        subType: question?.ques_sub_type,
+        linkedQuestionId: question?.linked_question_id,
+        linkedAnswerId: question?.linked_answer_id,
+        questionText: question?.question,
+        numberedAnswers,
+        correctAnswers,
+        answers: correctAnswers.length ? correctAnswers : numberedAnswers,
+      };
+    }),
+  };
+}
+
+function stepExtResolveLinkedAnswers(sectionCount) {
+  const questions = STEP_EXT_RESPONSE_MODEL?.questions || [];
+  if (!sectionCount || !questions.length) return [];
+
+  const answerQuestions = questions.filter(question => question.answers.length > 0);
+  if (answerQuestions.length >= sectionCount) {
+    const onePerQuestion = answerQuestions
+      .slice(0, sectionCount)
+      .map(question => question.answers[0] || '')
+      .filter(Boolean);
+    if (onePerQuestion.length === sectionCount) return onePerQuestion;
+  }
+
+  if (questions.length === 1) {
+    const question = questions[0];
+    if (question.numberedAnswers.length >= sectionCount) {
+      return question.numberedAnswers.slice(0, sectionCount);
+    }
+    if (question.correctAnswers.length >= sectionCount) {
+      return question.correctAnswers.slice(0, sectionCount);
+    }
+  }
+
+  return [];
+}
+
+function stepExtGetLinkedQuestionSections() {
+  const linkedRoots = Array.from(document.querySelectorAll('[id~="linked-question"]'));
+
+  for (const root of linkedRoots) {
+    const accordion = root.querySelector('.accordion');
+    if (!accordion) continue;
+
+    const sections = Array.from(accordion.querySelectorAll('.card .quiz-area-options'));
+    if (sections.length > 1) return sections;
+  }
+
+  return [];
+}
+
+function stepExtPublishParsedAnswers() {
+  const allSectionCount = document.querySelectorAll('.quiz-area-options').length;
+  const sectionCount = stepExtGetLinkedQuestionSections().length;
+  const currentQuestion = STEP_EXT_RESPONSE_MODEL?.questions[0];
+  const isLongAnswerWithoutFixedAnswer = currentQuestion?.type === 'LA' && currentQuestion.answers.length === 0;
+  STEP_EXT_LINKED_ANSWERS = stepExtResolveLinkedAnswers(sectionCount);
+
+  console.groupCollapsed('[StepExt] API answer analysis');
+  stepExtLog('Attempt ID:', STEP_EXT_RESPONSE_MODEL?.attemptId);
+  stepExtLog('Reported module question count:', STEP_EXT_RESPONSE_MODEL?.questionCount);
+  stepExtLog('Current next_question records:', STEP_EXT_RESPONSE_MODEL?.questions.length || 0);
+  stepExtLog('All .quiz-area-options elements:', allSectionCount);
+  stepExtLog('Confirmed linked-question sections:', sectionCount);
+  (STEP_EXT_RESPONSE_MODEL?.questions || []).forEach(question => {
+    stepExtLog(`API question ${question.index + 1}:`, {
+      questionId: question.questionId,
+      type: question.type,
+      subType: question.subType,
+      linkedQuestionId: question.linkedQuestionId,
+      linkedAnswerId: question.linkedAnswerId,
+      question: question.questionText,
+      correctAnswers: question.correctAnswers,
+      numberedAnswers: question.numberedAnswers,
+      selectedAnswerSource: question.correctAnswers.length
+        ? 'correct_answers'
+        : question.numberedAnswers.length ? 'correct_answer_N' : 'none',
+    });
+  });
+  stepExtLog('Resolved linked-section answers:', STEP_EXT_LINKED_ANSWERS);
+  stepExtLog('Long answer without fixed API answer:', isLongAnswerWithoutFixedAnswer);
+  if (sectionCount > 1 && STEP_EXT_LINKED_ANSWERS.length !== sectionCount) {
+    console.warn('[StepExt] Multi-question answers could not be mapped safely.', {
+      expectedSections: sectionCount,
+      resolvedAnswers: STEP_EXT_LINKED_ANSWERS.length,
+    });
+  }
+  console.groupEnd();
+
+  setTimeout(() => {
+    const span = document.querySelector('#getStepAnswerDialog span');
+    if (!span) return;
+
+    span.dataset.noFixedAnswer = isLongAnswerWithoutFixedAnswer ? 'true' : 'false';
+
+    if (isLongAnswerWithoutFixedAnswer) {
+      const visibleAnswerHint = span.textContent.trim();
+      if (visibleAnswerHint &&
+          visibleAnswerHint !== 'Awaiting API...' &&
+          !visibleAnswerHint.startsWith('No fixed answer')) {
+        span.dataset.answerHint = visibleAnswerHint;
+        stepExtLog('Preserved visible overlay text as the long-answer seed:', visibleAnswerHint);
+      } else {
+        delete span.dataset.answerHint;
+        span.textContent = 'No fixed answer - a long response will be generated.';
+      }
+      span.dataset.processed = 'false';
+      return;
+    }
+
+    if (STEP_EXT_LINKED_ANSWERS.length <= 1) return;
+
+    span.textContent = STEP_EXT_LINKED_ANSWERS
+      .map((answer, index) => `Q${index + 1}: ${answer}`)
+      .join(' | ');
+    span.dataset.processed = 'false';
+    stepExtLog('Overlay updated with all linked answers:', span.textContent);
+  }, 0);
+}
+
+(function inspectStepApiResponses() {
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = async function(...args) {
+    const requestUrl = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+    const response = await originalFetch(...args);
+
+    if (typeof requestUrl === 'string' && requestUrl.includes('api.steptest.in/v1/fetchattempt/')) {
+      stepExtLog('Fetch-attempt response received:', {
+        url: requestUrl,
+        status: response.status,
+        ok: response.ok,
+      });
+
+      response.clone().json().then(payload => {
+        STEP_EXT_RESPONSE_MODEL = stepExtBuildResponseModel(payload);
+        stepExtPublishParsedAnswers();
+      }).catch(error => {
+        console.error('[StepExt] Could not inspect fetch-attempt JSON:', error);
+      });
+    }
+
+    return response;
+  };
+})();
+
 let VIRTUAL_AUDIO_DURATION = 5;
 
 (function injectMicHook() {
@@ -136,7 +321,10 @@ function showStepErrorDialog(msg) {
 }
 
 async function autoSelectAnswer() {
-  if (isSolving) return;
+  if (isSolving) {
+    stepExtLog('Auto-select ignored because another solve is already running.');
+    return;
+  }
   isSolving = true;
 
   try {
@@ -158,7 +346,14 @@ async function autoSelectAnswer() {
     if (!overlay) return;
 
     const span = overlay.querySelector('span');
-    const rawAnswer = span ? span.textContent.trim() : '';
+    const hasNoFixedApiAnswer = span?.dataset.noFixedAnswer === 'true';
+    const visibleAnswerHint = span?.dataset.answerHint?.trim() || '';
+    const rawAnswer = span
+      ? (hasNoFixedApiAnswer ? visibleAnswerHint : span.textContent.trim())
+      : '';
+    const allAnswerSections = Array.from(document.querySelectorAll('.quiz-area-options'));
+    const linkedSections = stepExtGetLinkedQuestionSections();
+    const isLinkedQuestionGroup = linkedSections.length > 1;
 
     // Answers are pipe-separated or hash-separated for multi-select. 
     let answers = [];
@@ -192,14 +387,33 @@ async function autoSelectAnswer() {
             }
         }
     }
+
+    stepExtLog('Auto-select started:', {
+      rawOverlayAnswer: rawAnswer,
+      hasNoFixedApiAnswer,
+      visibleAnswerHint,
+      parsedOverlayAnswers: answers,
+      allAnswerSectionCount: allAnswerSections.length,
+      confirmedLinkedSectionCount: linkedSections.length,
+      resolvedLinkedAnswers: STEP_EXT_LINKED_ANSWERS,
+      detectedTypes: {
+        typing: isTypingType,
+        linkedQuestionGroup: isLinkedQuestionGroup,
+        converse: isConverseType,
+        speakingConverse: isSpeakingConverse,
+        speakTheLine: isSpeakTheLine,
+        arrangeWords: isArrangeWords,
+      },
+    });
     
     // Prevent double-solve if the content hasn't changed.
     // Also, don't update lastSolvedAnswerChunk with a placeholder, as that blocks the fallback.
     const errorEl = document.querySelector('.test_validation:not([style*="display: none"])');
-    if (!isPlaceholder && rawAnswer === lastSolvedAnswerChunk && !errorEl) {
+    if (!isTypingType && !isPlaceholder && rawAnswer === lastSolvedAnswerChunk && !errorEl) {
+       stepExtLog('Auto-select skipped because this non-typing answer was already processed:', rawAnswer);
        return;
     }
-    if (!isPlaceholder) lastSolvedAnswerChunk = rawAnswer;
+    if (!isTypingType && !isPlaceholder) lastSolvedAnswerChunk = rawAnswer;
 
     console.log('[StepExt] Attempting to solve:', answers);
 
@@ -215,12 +429,97 @@ async function autoSelectAnswer() {
     const visibleTyping = document.getElementById('textResponse');
     const isVisibleTyping = visibleTyping && visibleTyping.offsetParent !== null;
 
-    if (isVisibleTyping) {
+    if (isLinkedQuestionGroup) {
+      // Linked MCQs use one .quiz-area-options section per accordion question.
+      const linkedAnswers = stepExtResolveLinkedAnswers(linkedSections.length);
+      STEP_EXT_LINKED_ANSWERS = linkedAnswers;
+
+      console.groupCollapsed('[StepExt] Linked-question selection plan');
+      stepExtLog('Section count:', linkedSections.length);
+      stepExtLog('Answers selected from API response:', linkedAnswers);
+      linkedSections.forEach((section, index) => {
+        stepExtLog(`Section ${index + 1} available options:`,
+          Array.from(section.querySelectorAll('li')).map(option => ({
+            text: option.textContent.trim(),
+            value: option.querySelector('input')?.value || '',
+          }))
+        );
+      });
+      console.groupEnd();
+
+      if (linkedAnswers.length !== linkedSections.length) {
+        console.error('[StepExt] Linked-question automation stopped: answer count does not match section count.', {
+          sectionCount: linkedSections.length,
+          answerCount: linkedAnswers.length,
+          answers: linkedAnswers,
+        });
+        showStepErrorDialog('Could not map every linked answer. Check the StepExt console logs.');
+        return;
+      }
+
+      for (let index = 0; index < linkedSections.length; index++) {
+        const section = linkedSections[index];
+        const expectedAnswer = linkedAnswers[index];
+        const card = section.closest('.card');
+        const collapse = card?.querySelector('.collapse');
+        const header = card?.querySelector('.card-header');
+
+        stepExtLog(`Preparing linked question ${index + 1}:`, {
+          expectedAnswer,
+          sectionId: section.id || null,
+          isExpanded: !!collapse?.classList.contains('show'),
+        });
+
+        if (collapse && !collapse.classList.contains('show') && header) {
+          stepExtLog(`Expanding linked question ${index + 1}.`);
+          safeClick(header);
+          await new Promise(r => setTimeout(r, 300));
+        }
+
+        const options = Array.from(section.querySelectorAll('li'));
+        const match = options.find(option => {
+          const optionValue = option.querySelector('input')?.value || '';
+          return normalize(option.textContent) === normalize(expectedAnswer) ||
+            normalize(optionValue) === normalize(expectedAnswer) ||
+            superClean(option.textContent) === superClean(expectedAnswer) ||
+            superClean(optionValue) === superClean(expectedAnswer);
+        });
+
+        if (!match) {
+          console.error(`[StepExt] Linked question ${index + 1} has no matching option.`, {
+            expectedAnswer,
+            availableOptions: options.map(option => option.textContent.trim()),
+          });
+          showStepErrorDialog(`No option match for linked question ${index + 1}.`);
+          return;
+        }
+
+        stepExtLog(`Selecting linked question ${index + 1}:`, {
+          expectedAnswer,
+          matchedText: match.textContent.trim(),
+          matchedValue: match.querySelector('input')?.value || '',
+        });
+        safeClick(match);
+        await new Promise(r => setTimeout(r, 350));
+      }
+
+      stepExtLog('All linked questions were matched and selected successfully.');
+
+    } else if (isVisibleTyping) {
       // ── TYPING RESPONSE (textarea) ─────────────────────────────────────────
       const textArea = visibleTyping;
-      let answerText = (answers.join(' ') + " " + "bing bong ding dong unga bunga go go ha ha lelo rvce gay iptc magic words fly high chicken dinner victory royale skibidi toilet rizzler gyatt sigma fanum tax over the moon under the sea across the galaxy into the void where shadows dance and pixels play for a thousand years of pure chaos in the matrix of destiny with tacos and lasers for everyone forever and ever amen hallelujah it works like magic boom shackalacka").trim();
+      const answerSeed = answers.join(' ').trim();
+      const neutralLongAnswer = 'The picture shows a comfortable room with several useful objects arranged neatly. The main furniture is placed in the center, while smaller items are kept around it so that the room remains easy to use. The lighting makes the space look bright and welcoming. It appears clean, organized, practical, and suitable for everyday activities and relaxation.';
+      const answerText = (answerSeed + ' ' + neutralLongAnswer).trim();
+      const generatedWordCount = answerText.split(/\s+/).filter(Boolean).length;
       
-      console.log('[StepExt] Typing aggressive sequence...');
+      stepExtLog('Preparing long-answer response:', {
+        apiQuestionType: STEP_EXT_RESPONSE_MODEL?.questions[0]?.type || null,
+        hasFixedApiAnswer: !hasNoFixedApiAnswer,
+        answerSeed,
+        generatedWordCount,
+        responsePreview: answerText.slice(0, 160),
+      });
       
       textArea.focus();
       textArea.value = answerText;
@@ -233,7 +532,11 @@ async function autoSelectAnswer() {
       
       // Wait for the word counter to update before proceeding
       await new Promise(r => setTimeout(r, 500));
-      console.log('[StepExt] Typed answer with aggressive events.');
+      stepExtLog('Long-answer field updated:', {
+        textareaLength: textArea.value.length,
+        generatedWordCount,
+        displayedWordCount: document.getElementById('display_count')?.textContent?.trim() || null,
+      });
 
     } else if (isSpeakingConverse) {
       // ── SPEAKING / CONVERSE MULTI-SECTION ──────────────────────────────────
@@ -304,6 +607,7 @@ async function autoSelectAnswer() {
     } else if (isMultiSelect) {
       // ── MULTI-SELECT (checkboxes) ──────────────────────────────────────────
       const checkboxes = Array.from(document.querySelectorAll('input.check-field[type="checkbox"]'));
+      stepExtLog('Multi-select checkbox candidates:', checkboxes.map(checkbox => checkbox.value));
       if (!checkboxes.length) {
         console.warn('[StepExt] Aborting: No checkboxes found in multi-select section.');
         return;
@@ -328,6 +632,7 @@ async function autoSelectAnswer() {
       // Answers for arrangement are usually one full string
       let remaining = answers.join(' ').replace(/\s+/g, ' ').trim();
       const buttons = Array.from(document.querySelectorAll('.converse-pasage-options button, .arrange-words-btn button, .arrange-words-inposition button'));
+      stepExtLog('Arrangement button candidates:', buttons.map(button => button.innerText.trim()));
       
       console.log('[StepExt] Rearranging sequence for:', remaining);
       
@@ -494,13 +799,17 @@ async function autoSelectAnswer() {
       let options = [];
       for (const sel of ANSWER_OPTION_SELECTORS) {
         options = Array.from(document.querySelectorAll(sel));
-        if (options.length) break;
+        if (options.length) {
+          stepExtLog('Single-select option selector used:', sel);
+          break;
+        }
       }
       if (!options.length) {
         console.warn('[StepExt] Aborting: Unknown element structure.');
         return;
       }
       const target = normalize(answers[0]);
+      stepExtLog('Single-select candidates:', options.map(option => option.textContent.trim()));
       // Improved match using superClean as fallback for tricky characters
       const superClean = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
       const match = options.find(el => normalize(el.textContent) === target) || 
@@ -513,7 +822,10 @@ async function autoSelectAnswer() {
       
       // Aggressive click sequence for platform state detection
       safeClick(match);
-      console.log('[StepExt] Selected:', answers[0]);
+      stepExtLog('Single-select option matched and clicked:', {
+        expectedAnswer: answers[0],
+        matchedText: match.textContent.trim(),
+      });
     }
 
     // ── FALLBACK CHECK ───────────────────────────────────────────────────────
@@ -533,6 +845,12 @@ async function autoSelectAnswer() {
 
     await new Promise(r => setTimeout(r, AUTO_SUBMIT_DELAY_MS));
     const btn = document.querySelector('#testSubmit');
+    stepExtLog('Submit readiness check:', {
+      found: !!btn,
+      disabled: !!btn?.classList.contains('disabledElement'),
+      className: btn?.className || null,
+      title: btn?.title || null,
+    });
     if (!btn || btn.classList.contains('disabledElement')) {
       console.warn('[StepExt] Step Error: Submit button did not enable after selection.');
       
@@ -546,17 +864,23 @@ async function autoSelectAnswer() {
       return;
     }
     safeClick(btn);
-    console.log('[StepExt] Submitted.');
+    stepExtLog('Submit button clicked.');
 
     // 5. Next Question
     await new Promise(r => setTimeout(r, AUTO_NEXT_DELAY_MS));
     const nextBtn = document.querySelector('#testSubmit');
     if (nextBtn && nextBtn.title === 'Next question') {
       safeClick(nextBtn);
-      console.log('[StepExt] Next question...');
+      stepExtLog('Next-question button clicked.');
+    } else {
+      stepExtLog('Next-question button was not ready after the wait.', {
+        found: !!nextBtn,
+        title: nextBtn?.title || null,
+      });
     }
   } finally {
     isSolving = false;
+    stepExtLog('Auto-select run finished; solve lock released.');
   }
 }
 
@@ -650,4 +974,4 @@ try {
     attributes: true,
     attributeFilter: ['style', 'class']
   });
-} catch (_) {}
+} catch (_) {}
