@@ -62,6 +62,7 @@
     const AUDIO_URL = scriptTag ? scriptTag.dataset.voiceUrl : '';
     
     let audioContext = null;
+    let audioSource = null;
     let audioStream = null;
     let audioElement = null;
 
@@ -71,19 +72,21 @@
     navigator.mediaDevices.getUserMedia = async function(constraints) {
         if (constraints.audio) {
             console.log('[StepExt] Intercepting getUserMedia for virtual audio');
-            
-            if (!audioContext) {
+
+            if (!audioContext || !audioSource) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 audioElement = new Audio(AUDIO_URL);
                 audioElement.crossOrigin = "anonymous";
-                
-                const source = audioContext.createMediaElementSource(audioElement);
-                const destination = audioContext.createMediaStreamDestination();
-                source.connect(destination);
-                source.connect(audioContext.destination); // Optional: play locally too
-                
-                audioStream = destination.stream;
+
+                audioSource = audioContext.createMediaElementSource(audioElement);
+                audioSource.connect(audioContext.destination); // Optional: play locally too
             }
+
+            // v4 runs a mic check that stops the returned tracks before the real
+            // recorder starts, so hand out a fresh destination stream every time.
+            const destination = audioContext.createMediaStreamDestination();
+            audioSource.connect(destination);
+            audioStream = destination.stream;
 
             return audioStream;
         }

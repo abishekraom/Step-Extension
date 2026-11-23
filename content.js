@@ -44,6 +44,7 @@ function stepExtBuildResponseModel(payload) {
         questionId: question?.question_id,
         type: question?.type,
         subType: question?.ques_sub_type,
+        domain: question?.domain,
         linkedQuestionId: question?.linked_question_id,
         linkedAnswerId: question?.linked_answer_id,
         questionText: question?.question || question?.prompt || '',
@@ -204,7 +205,10 @@ function isStepV4LessonPage() {
 function stepExtV4ChoiceText(button) {
   if (!button) return '';
   const contentSpan = Array.from(button.children)
-    .find(child => child.tagName === 'SPAN' && !child.classList.contains('key'));
+    .filter(child => child.tagName === 'SPAN' &&
+      !child.classList.contains('key') &&
+      child.getAttribute('aria-hidden') !== 'true')
+    .find(child => child.textContent.trim());
   const raw = contentSpan?.textContent || button.textContent || '';
   return raw.replace(/^[A-Z]\.\s*/, '').trim();
 }
@@ -1083,6 +1087,183 @@ async function autoSelectAnswer() {
   }
 }
 
+// ── V4 SHARED HELPERS ────────────────────────────────────────────────────────
+function stepExtV4FindRecorderButton() {
+  return Array.from(document.querySelectorAll('button'))
+    .find(button => /tap to record|stop|re-record|saving|try again/i.test(button.textContent || '')) || null;
+}
+
+function isStepV4SpeakingQuestion(question) {
+  if (document.querySelector('[data-testid="live-mic-visualizer"]')) return true;
+  if (stepExtV4FindRecorderButton()) return true;
+
+  const type = String(question?.type || '').toUpperCase();
+  const subType = String(question?.subType || '').toUpperCase();
+  const domain = String(question?.domain || '').toUpperCase();
+  return domain === 'S' || type === 'S' || subType === 'S';
+}
+
+function stepExtV4GetFooterButton() {
+  return document.querySelector('footer.player-foot button') ||
+    document.querySelector('footer button');
+}
+
+function stepExtV4SafeClick(element) {
+  if (!element) return;
+  ['mousedown', 'mouseup', 'click'].forEach(type => {
+    element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+  });
+  if (typeof element.focus === 'function') element.focus();
+}
+
+// ── V4 SPEAKING / RECORD SOLVER ──────────────────────────────────────────────
+// The v4 recorder is react-audio-analyser based and still calls getUserMedia, so
+// inject.js can feed it the virtual mic stream. The controls are a single button
+// that cycles through Tap to record -> Stop -> Re-record.
+async function autoSelectAnswerV4Speaking(span) {
+  if (isSolving) {
+    stepExtLog('V4 speaking ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const getFooterButton = stepExtV4GetFooterButton;
+  const safeClick = stepExtV4SafeClick;
+  const recorderLabel = () => (stepExtV4FindRecorderButton()?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  isSolving = true;
+  try {
+    let button = stepExtV4FindRecorderButton();
+    for (let attempt = 0; attempt < 60 && !button; attempt++) {
+      await sleep(250);
+      button = stepExtV4FindRecorderButton();
+    }
+
+    if (!button) {
+      stepExtLog('V4 speaking: recorder UI never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    let recorded = /re-record/i.test(button.textContent || '');
+    let attempts = 0;
+
+    while (!recorded && attempts < 2) {
+      attempts++;
+
+      if (!/tap to record/i.test(recorderLabel())) {
+        await sleep(500);
+      }
+
+      const startButton = stepExtV4FindRecorderButton();
+      if (!startButton || !/tap to record/i.test(startButton.textContent || '')) {
+        stepExtLog('V4 speaking: record button not ready.', { label: recorderLabel() });
+        break;
+      }
+      if (startButton.disabled) {
+        stepExtLog('V4 speaking: no recording attempts remaining.');
+        break;
+      }
+
+      safeClick(startButton);
+
+      // Wait until the recorder actually starts capturing before feeding audio.
+      for (let wait = 0; wait < 40; wait++) {
+        await sleep(200);
+        if (/stop|saving/i.test(recorderLabel())) break;
+      }
+
+      window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'PLAY' }, '*');
+      await sleep(300);
+      const durationSeconds = Number.isFinite(VIRTUAL_AUDIO_DURATION) && VIRTUAL_AUDIO_DURATION > 0
+        ? VIRTUAL_AUDIO_DURATION
+        : 5;
+      const waitMs = Math.max(2.6, durationSeconds + 0.8) * 1000;
+      stepExtLog('V4 speaking: recording virtual audio for', waitMs, 'ms');
+      await sleep(waitMs);
+
+      const stopButton = stepExtV4FindRecorderButton();
+      if (stopButton && /stop/i.test(stopButton.textContent || '')) {
+        safeClick(stopButton);
+        stepExtLog('V4 speaking: stop clicked.');
+      }
+
+      // Encoding flips the control to Re-record on success, or to Try again
+      // after a failed take.
+      for (let wait = 0; wait < 80; wait++) {
+        await sleep(250);
+        const label = recorderLabel();
+        if (/re-record/i.test(label)) { recorded = true; break; }
+        if (/tap to record/i.test(label)) break;
+        if (/try again/i.test(label)) {
+          safeClick(stepExtV4FindRecorderButton());
+          await sleep(400);
+          break;
+        }
+      }
+
+      window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'STOP' }, '*');
+
+      if (!recorded) {
+        stepExtLog('V4 speaking: take was not accepted, retrying.', {
+          attempt: attempts,
+          label: recorderLabel(),
+        });
+        for (let wait = 0; wait < 20 && !/tap to record/i.test(recorderLabel()); wait++) {
+          await sleep(250);
+        }
+        await sleep(300);
+      }
+    }
+
+    if (!recorded) {
+      stepExtLog('V4 speaking: no accepted recording after retries.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 80 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(250);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      stepExtLog('V4 speaking: submit stayed disabled after recording.', {
+        recorder: recorderLabel(),
+        footer: footerButton?.textContent?.trim() || null,
+      });
+      showStepErrorDialog('Recording did not enable Submit.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 speaking: submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate || candidate.disabled) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+      if (label.includes('next')) {
+        safeClick(candidate);
+        stepExtLog('V4 speaking: next clicked.');
+        break;
+      }
+      if (label.includes('submit')) {
+        stepExtLog('V4 speaking: feedback skipped; waiting for the next payload.');
+        break;
+      }
+    }
+  } finally {
+    isSolving = false;
+  }
+}
+
 // ── V4 SINGLE / MULTI CHOICE SOLVER ──────────────────────────────────────────
 // v4 renders choices as button.choice elements and a single footer button that
 // reads Submit, then Next -> after feedback. There is no #testSubmit anymore.
@@ -1097,6 +1278,11 @@ async function autoSelectAnswerV4() {
   if (!span) return;
 
   const question = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
+
+  if (isStepV4SpeakingQuestion(question)) {
+    return autoSelectAnswerV4Speaking(span);
+  }
+
   let expectedAnswers = Array.isArray(question?.answers) ? question.answers.slice() : [];
   const visibleAnswer = span.textContent.trim();
   const isPlaceholder = !visibleAnswer ||
@@ -1120,53 +1306,79 @@ async function autoSelectAnswerV4() {
   const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const normalize = value => String(value ?? '').trim().toLowerCase();
   const superClean = value => normalize(value).replace(/[^a-z0-9]/g, '');
-  const safeClick = element => {
-    if (!element) return;
-    ['mousedown', 'mouseup', 'click'].forEach(type => {
-      element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-    });
-    if (typeof element.focus === 'function') element.focus();
+  const getFooterButton = stepExtV4GetFooterButton;
+  const safeClick = stepExtV4SafeClick;
+  const getVisibleChoices = () => Array.from(document.querySelectorAll('button.choice'))
+    .filter(button => button.offsetParent !== null);
+  const buildChoiceInfo = buttons => buttons.map(button => ({
+    button,
+    text: stepExtV4ChoiceText(button),
+    key: (button.querySelector('.key')?.textContent || '').replace(/[^A-Za-z]/g, ''),
+    selected: button.classList.contains('is-selected') ||
+      button.getAttribute('aria-pressed') === 'true',
+  }));
+  const matchesAnswer = (choice, answer) => {
+    const resolved = stepExtV4ResolveChoiceLabel(question, answer);
+    const answerText = String(answer ?? '').trim();
+    const resolvedText = String(resolved?.text ?? '').trim();
+    const choiceText = String(choice.text ?? '').trim();
+
+    // A letter alone is not enough: the previous question can still be in the
+    // DOM during a route transition and its A/B/C/D keys would match.
+    if (choiceText) {
+      if (answerText &&
+          (normalize(choiceText) === normalize(answerText) ||
+           superClean(choiceText) === superClean(answerText))) {
+        return true;
+      }
+      if (resolvedText &&
+          (normalize(choiceText) === normalize(resolvedText) ||
+           superClean(choiceText) === superClean(resolvedText))) {
+        return true;
+      }
+      return false;
+    }
+
+    // Image-only choices have no text, so fall back to the key mapping.
+    const candidates = [answerText, resolved?.key, resolved?.displayKey].filter(Boolean);
+    const choiceKey = normalize(choice.key);
+    return !!choiceKey && candidates.some(candidate => choiceKey === normalize(candidate));
   };
-  const getFooterButton = () => document.querySelector('footer.player-foot button') ||
-    document.querySelector('footer button');
+  const allAnswersPresent = () => {
+    const choices = buildChoiceInfo(getVisibleChoices());
+    if (!choices.length) return false;
+    return expectedAnswers.every(answer => choices.some(choice => matchesAnswer(choice, answer)));
+  };
 
   isSolving = true;
   try {
+    // Wait for the SPA to settle on this question. During a question
+    // transition the previous question's choices can still be in the DOM,
+    // which is what tripped the submit guardrail on multi-select questions.
     await sleep(AUTO_SELECT_DELAY_MS);
 
-    let choices = [];
-    for (let attempt = 0; attempt < 20; attempt++) {
-      choices = Array.from(document.querySelectorAll('button.choice'))
-        .filter(button => button.offsetParent !== null);
-      if (choices.length) break;
-      await sleep(150);
+    let ready = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (allAnswersPresent()) { ready = true; break; }
+      await sleep(250);
     }
 
-    if (!choices.length) {
-      stepExtLog('V4: no choice buttons found. This question type is not wired yet.');
+    if (!ready) {
+      const choices = buildChoiceInfo(getVisibleChoices());
+      stepExtLog('V4 choices never matched the API answers.', {
+        expectedAnswers,
+        choices: choices.map(choice => ({ key: choice.key, text: choice.text })),
+      });
       span.dataset.processed = 'true';
       return;
     }
 
-    const choiceInfo = choices.map(button => ({
-      button,
-      text: stepExtV4ChoiceText(button),
-      key: (button.querySelector('.key')?.textContent || '').replace(/[^A-Za-z]/g, ''),
-      selected: button.classList.contains('is-selected'),
-    }));
-
+    const choiceInfo = buildChoiceInfo(getVisibleChoices());
     const targets = [];
     for (const answer of expectedAnswers) {
-      const resolved = stepExtV4ResolveChoiceLabel(question, answer);
-      const candidates = [String(answer), resolved?.text, resolved?.key, resolved?.displayKey].filter(Boolean);
-      const match = choiceInfo.find(choice => {
-        if (targets.includes(choice)) return false;
-        return candidates.some(candidate =>
-          normalize(choice.text) === normalize(candidate) ||
-          superClean(choice.text) === superClean(candidate) ||
-          normalize(choice.key) === normalize(candidate)
-        );
-      });
+      const match = choiceInfo.find(choice =>
+        !targets.includes(choice) && matchesAnswer(choice, answer)
+      );
       if (match) targets.push(match);
     }
 
@@ -1184,6 +1396,19 @@ async function autoSelectAnswerV4() {
       if (target.selected) continue;
       safeClick(target.button);
       await sleep(250);
+
+      // React can replace the node on re-render, so verify and retry once.
+      if (!target.button.classList.contains('is-selected') &&
+          target.button.getAttribute('aria-pressed') !== 'true') {
+        const fresh = buildChoiceInfo(getVisibleChoices()).find(choice =>
+          (normalize(choice.text) && normalize(choice.text) === normalize(target.text)) ||
+          (normalize(choice.key) && normalize(choice.key) === normalize(target.key))
+        );
+        if (fresh && !fresh.selected) {
+          safeClick(fresh.button);
+          await sleep(250);
+        }
+      }
     }
 
     span.dataset.processed = 'true';
@@ -1192,9 +1417,31 @@ async function autoSelectAnswerV4() {
     await sleep(AUTO_SUBMIT_DELAY_MS);
 
     let footerButton = getFooterButton();
-    for (let attempt = 0; attempt < 20 && (!footerButton || footerButton.disabled); attempt++) {
-      await sleep(150);
+    for (let attempt = 0; attempt < 40 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
       footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      // One retry for clicks lost during a re-render, then keep the guardrail.
+      const refreshed = buildChoiceInfo(getVisibleChoices());
+      for (const choice of refreshed) {
+        if (choice.selected) continue;
+        if (expectedAnswers.some(answer => matchesAnswer(choice, answer))) {
+          safeClick(choice.button);
+          await sleep(200);
+        }
+      }
+      for (let attempt = 0; attempt < 30 && (!footerButton || footerButton.disabled); attempt++) {
+        await sleep(200);
+        footerButton = getFooterButton();
+      }
+      stepExtLog('V4 submit readiness after retry:', {
+        enabled: !!footerButton && !footerButton.disabled,
+        selected: buildChoiceInfo(getVisibleChoices())
+          .filter(choice => choice.selected)
+          .map(choice => choice.key),
+      });
     }
 
     if (!footerButton || footerButton.disabled) {
