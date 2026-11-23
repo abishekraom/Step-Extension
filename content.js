@@ -1144,6 +1144,31 @@ function isStepV4WordBankQuestion(question) {
     type.includes('word bank') || subType.includes('word bank');
 }
 
+function isStepV4ClozeQuestion(question) {
+  if (document.querySelector('[data-testid^="cloze-blank-"]')) return true;
+
+  const type = String(question?.type || '').toLowerCase();
+  const subType = String(question?.subType || '').toLowerCase();
+  return type.includes('cloze') || subType.includes('cloze') ||
+    type.includes('fill') || subType.includes('fill');
+}
+
+function stepExtV4ClozeTargets(span, question) {
+  const rawAnswers = Array.isArray(question?.answers) && question.answers.length
+    ? question.answers
+    : String(span?.dataset?.answerHint || span?.textContent || '')
+        .split(/[|#]/)
+        .map(value => value.trim())
+        .filter(Boolean);
+
+  return rawAnswers
+    .map(answer => {
+      const resolved = stepExtV4ResolveChoiceLabel(question, answer);
+      return String(resolved?.text || answer).replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
+    })
+    .filter(Boolean);
+}
+
 function stepExtV4WordBankTarget(span, question) {
   const raw = (span?.dataset?.answerHint || span?.textContent || '').trim();
   const cleaned = raw.replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
@@ -1440,6 +1465,171 @@ async function autoSelectAnswerV4Speaking(span) {
   }
 }
 
+// ── V4 FILL-IN-THE-BLANKS (CLOZE) SOLVER ────────────────────────────────────
+// Cloze questions render cloze-blank-N buttons inside the passage and a
+// distractor word bank. Tapping a chip fills the first empty blank.
+async function autoSelectAnswerV4Cloze(span, question) {
+  if (isSolving) {
+    stepExtLog('V4 cloze ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const normalize = value => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const superClean = value => normalize(value).replace(/[^a-z0-9]/g, '');
+  const safeClick = stepExtV4SafeClick;
+  const getFooterButton = stepExtV4GetFooterButton;
+
+  const targets = stepExtV4ClozeTargets(span, question);
+  if (!targets.length) {
+    stepExtLog('V4 cloze: no target words.');
+    span.dataset.processed = 'true';
+    return;
+  }
+
+  const getBlanks = () => Array.from(document.querySelectorAll('[data-testid^="cloze-blank-"]'));
+  const blankText = blank => (blank?.textContent || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const getChipContainer = () => {
+    const reset = Array.from(document.querySelectorAll('button'))
+      .find(button => button.textContent.trim().toLowerCase() === 'reset');
+    if (reset?.previousElementSibling) return reset.previousElementSibling;
+    return document.querySelector('.q-stim')?.nextElementSibling || null;
+  };
+  const getChips = () => {
+    const container = getChipContainer();
+    return container ? Array.from(container.querySelectorAll('button')) : [];
+  };
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let blanks = [];
+    for (let attempt = 0; attempt < 60; attempt++) {
+      blanks = getBlanks();
+      if (blanks.length) break;
+      await sleep(250);
+    }
+
+    if (!blanks.length) {
+      stepExtLog('V4 cloze: blanks never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    if (targets.length !== blanks.length) {
+      stepExtLog('V4 cloze: target count does not match blank count.', {
+        targets,
+        blanks: blanks.length,
+      });
+      showStepErrorDialog('Fill-blanks answer count does not match.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    const current = blanks.map(blankText);
+    if (current.some(Boolean) && current.join('|') !== targets.join('|')) {
+      const reset = Array.from(document.querySelectorAll('button'))
+        .find(button => button.textContent.trim().toLowerCase() === 'reset');
+      if (reset) {
+        safeClick(reset);
+        await sleep(350);
+      }
+    }
+
+    for (let index = 0; index < targets.length; index++) {
+      blanks = getBlanks();
+      if (normalize(blankText(blanks[index])) === normalize(targets[index])) continue;
+
+      const chip = getChips().find(button => {
+        const text = button.textContent.trim();
+        return normalize(text) === normalize(targets[index]) ||
+          superClean(text) === superClean(targets[index]);
+      });
+
+      if (!chip) {
+        stepExtLog('V4 cloze: no chip for target word.', {
+          target: targets[index],
+          chips: getChips().map(button => button.textContent.trim()),
+        });
+        break;
+      }
+
+      safeClick(chip);
+      await sleep(300);
+    }
+
+    blanks = getBlanks();
+    const built = blanks.map(blankText);
+    stepExtLog('V4 cloze built:', { targets, built });
+    if (built.length !== targets.length ||
+        built.some((text, index) => normalize(text) !== normalize(targets[index]))) {
+      showStepErrorDialog('Fill-blanks answer did not match.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    // The cloze component asks for the completed passage to be read aloud.
+    let recorder = stepExtV4FindRecorderButton();
+    for (let attempt = 0; attempt < 20 && !recorder; attempt++) {
+      await sleep(250);
+      recorder = stepExtV4FindRecorderButton();
+    }
+    if (recorder) {
+      const recorded = await stepExtV4RecordVirtualTake();
+      if (!recorded) {
+        stepExtLog('V4 cloze: recording was not accepted.');
+        showStepErrorDialog('Fill-blanks recording was not accepted.');
+        span.dataset.processed = 'true';
+        return;
+      }
+    }
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 60 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit button did not enable after filling the blanks.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 cloze submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') break;
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 cloze next clicked.');
+        break;
+      }
+      if (label === 'submit') break;
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
 // ── V4 WORD BANK SOLVER ──────────────────────────────────────────────────────
 // Word bank questions render shuffled chip buttons plus a "Your sentence"
 // target. Some lessons also require a recording after the sentence is built.
@@ -1657,6 +1847,10 @@ async function autoSelectAnswerV4() {
   span.dataset.processed = 'true';
 
   const question = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
+
+  if (isStepV4ClozeQuestion(question)) {
+    return autoSelectAnswerV4Cloze(span, question);
+  }
 
   if (isStepV4WordBankQuestion(question)) {
     return autoSelectAnswerV4WordBank(span, question);
