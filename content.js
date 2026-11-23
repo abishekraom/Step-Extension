@@ -6,6 +6,9 @@ let STEP_EXT_RESPONSE_MODEL = null;
 let STEP_EXT_LINKED_ANSWERS = [];
 const STEP_V4_LESSON_PATH = /^\/learn\//;
 let lastV4AnswerToken = '';
+let pendingV4Solve = false;
+let activeV4SolveToken = '';
+let queuedV4Timer = null;
 
 function stepExtLog(label, details) {
   if (details === undefined) {
@@ -273,6 +276,11 @@ function stepExtV4IngestPayload(source, payload) {
 
   lastV4AnswerToken = token;
   STEP_EXT_RESPONSE_MODEL = model;
+
+  if (isSolving) {
+    pendingV4Solve = true;
+    stepExtLog('V4 new question ingested during a solve; queued it.');
+  }
 
   const formatted = stepExtV4FormatAnswers(question);
   const type = String(question.type || '').toUpperCase();
@@ -1116,6 +1124,22 @@ function stepExtV4SafeClick(element) {
   if (typeof element.focus === 'function') element.focus();
 }
 
+function stepExtV4SolveFinished() {
+  isSolving = false;
+  activeV4SolveToken = '';
+
+  if (!pendingV4Solve) return;
+  pendingV4Solve = false;
+  if (!AUTO_MODE_ENABLED) return;
+
+  stepExtLog('V4 starting the queued question.');
+  if (queuedV4Timer) clearTimeout(queuedV4Timer);
+  queuedV4Timer = setTimeout(() => {
+    queuedV4Timer = null;
+    autoSelectAnswer();
+  }, 250);
+}
+
 // ── V4 SPEAKING / RECORD SOLVER ──────────────────────────────────────────────
 // The v4 recorder is react-audio-analyser based and still calls getUserMedia, so
 // inject.js can feed it the virtual mic stream. The controls are a single button
@@ -1134,6 +1158,8 @@ async function autoSelectAnswerV4Speaking(span) {
     .trim();
 
   isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  const solveToken = lastV4AnswerToken;
   try {
     let button = stepExtV4FindRecorderButton();
     for (let attempt = 0; attempt < 60 && !button; attempt++) {
@@ -1246,21 +1272,36 @@ async function autoSelectAnswerV4Speaking(span) {
     const submitAt = Date.now();
     while (Date.now() - submitAt < 12000) {
       await sleep(200);
+
+      if (lastV4AnswerToken !== solveToken) {
+        stepExtLog('V4 speaking: next question payload detected; releasing the solve lock.');
+        break;
+      }
+
       const candidate = getFooterButton();
-      if (!candidate || candidate.disabled) continue;
+      if (!candidate) continue;
       const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') {
+          stepExtLog('V4 speaking: next question is ready; releasing the solve lock.');
+          break;
+        }
+        continue;
+      }
+
       if (label.includes('next')) {
         safeClick(candidate);
         stepExtLog('V4 speaking: next clicked.');
         break;
       }
-      if (label.includes('submit')) {
+      if (label === 'submit') {
         stepExtLog('V4 speaking: feedback skipped; waiting for the next payload.');
         break;
       }
     }
   } finally {
-    isSolving = false;
+    stepExtV4SolveFinished();
   }
 }
 
@@ -1276,6 +1317,15 @@ async function autoSelectAnswerV4() {
   const overlay = document.getElementById('getStepAnswerDialog') || stepExtEnsureOverlay();
   const span = overlay?.querySelector('span');
   if (!span) return;
+
+  // A normal observer trigger or a manual click means the queued retry is no
+  // longer needed.
+  if (queuedV4Timer) {
+    clearTimeout(queuedV4Timer);
+    queuedV4Timer = null;
+  }
+
+  span.dataset.processed = 'true';
 
   const question = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
 
@@ -1351,6 +1401,8 @@ async function autoSelectAnswerV4() {
   };
 
   isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  const solveToken = lastV4AnswerToken;
   try {
     // Wait for the SPA to settle on this question. During a question
     // transition the previous question's choices can still be in the DOM,
@@ -1461,21 +1513,36 @@ async function autoSelectAnswerV4() {
     const submitAt = Date.now();
     while (Date.now() - submitAt < 10000) {
       await sleep(200);
+
+      if (lastV4AnswerToken !== solveToken) {
+        stepExtLog('V4 next question payload detected; releasing the solve lock.');
+        break;
+      }
+
       const candidate = getFooterButton();
-      if (!candidate || candidate.disabled) continue;
+      if (!candidate) continue;
       const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') {
+          stepExtLog('V4 next question is ready; releasing the solve lock.');
+          break;
+        }
+        continue;
+      }
+
       if (label.includes('next')) {
         safeClick(candidate);
         stepExtLog('V4 next clicked.');
         break;
       }
-      if (label.includes('submit')) {
+      if (label === 'submit') {
         stepExtLog('V4 feedback skipped; waiting for the next question payload.');
         break;
       }
     }
   } finally {
-    isSolving = false;
+    stepExtV4SolveFinished();
   }
 }
 
@@ -1515,7 +1582,13 @@ const _stepExtObserver = new MutationObserver(() => {
       pausedByStepError = false; // manual toggle clears any previous pause
       syncUI();
       console.log('[StepExt] Auto-Mode changed to:', AUTO_MODE_ENABLED);
-      if (AUTO_MODE_ENABLED) autoSelectAnswer();
+      if (!AUTO_MODE_ENABLED) return;
+      if (isStepV4LessonPage() && isSolving) {
+        pendingV4Solve = true;
+        stepExtLog('V4 auto-mode enable queued behind the active solve.');
+        return;
+      }
+      autoSelectAnswer();
     };
     overlay.appendChild(toggleBtn);
     syncUI(); // initial state
@@ -1529,6 +1602,11 @@ const _stepExtObserver = new MutationObserver(() => {
     autoBtn.style.cssText = 'display:block; margin-top:6px; padding:3px 10px; font-size:12px; cursor:pointer; background:#0d6efd; color:#fff; border:none; border-radius:4px; width:100%;';
     autoBtn.onclick = (e) => {
       e.stopPropagation();
+      if (isStepV4LessonPage() && isSolving) {
+        pendingV4Solve = true;
+        stepExtLog('V4 manual request queued behind the active solve.');
+        return;
+      }
       autoSelectAnswer();
     };
     overlay.appendChild(autoBtn);
@@ -1555,6 +1633,14 @@ const _stepExtObserver = new MutationObserver(() => {
 
   // Only trigger if a new answer span is present and mode is ON
   if (AUTO_MODE_ENABLED && span.dataset.processed !== 'true') {
+    if (isStepV4LessonPage() && isSolving) {
+      if (lastV4AnswerToken && lastV4AnswerToken !== activeV4SolveToken) {
+        pendingV4Solve = true;
+        stepExtLog('V4 new question arrived while solving; queued it.');
+      }
+      return;
+    }
+
     span.dataset.processed = 'true';
     if (!validationError) span.dataset.retryAttempted = 'false'; // reset if it's potentially a new question
     console.log('[StepExt] Autonomous trigger: new question detected.');
@@ -1570,3 +1656,11 @@ try {
     attributeFilter: ['style', 'class']
   });
 } catch (_) {}
+
+// The legacy snippet installs window.onclick to look for #testSubmit, which
+// logs on every click in the v4 player. It is not used there.
+if (isStepV4LessonPage()) {
+  try {
+    window.onclick = null;
+  } catch (_) {}
+}
