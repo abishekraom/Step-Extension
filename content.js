@@ -17,16 +17,7 @@ const STEP_V4_NEUTRAL_SENTENCES = [
   'It appears clean, organized, practical, and suitable for everyday activities and relaxation.',
 ];
 
-const STEP_V4_QUESTION_FRAMES = [
-  'How did you learn to make {topic}?',
-  'What ingredients do you use to make {topic}?',
-  'How long does it take to prepare {topic}?',
-  'Which spices give {topic} its special taste?',
-  'Do you make {topic} on special occasions?',
-  'What do you usually serve with {topic}?',
-  'Will you share your {topic} recipe with me?',
-  'Why is {topic} so popular with everyone?',
-];
+
 
 function stepExtLog(label, details) {
   if (details === undefined) {
@@ -1245,25 +1236,9 @@ function stepExtV4ReadWordLimit(question) {
   };
 }
 
-function stepExtV4BuildLongAnswer(question, minWords, maxWords) {
-  const prompt = [question?.questionText, question?.prompt, question?.sourceText]
-    .filter(Boolean)
-    .join(' ');
-  const ask = prompt.match(/ask\s+(\d+)\s+questions?/i);
-  let text = '';
-
-  if (ask) {
-    const count = Math.min(20, Math.max(1, Number(ask[1]) || 7));
-    const about = prompt.match(/\babout\s+([^.!?]+)/i);
-    const rawTopic = about ? about[1].trim() : '';
-    const topic = rawTopic.replace(/^(her|his|their|your|my|our)\s+/i, '').trim() || 'it';
-    text = Array.from({ length: count }, (_, index) =>
-      STEP_V4_QUESTION_FRAMES[index % STEP_V4_QUESTION_FRAMES.length]
-        .replace(/\{topic\}/g, topic)
-    ).join(' ');
-  } else {
-    text = STEP_V4_NEUTRAL_SENTENCES.join(' ');
-  }
+function stepExtV4BuildLongAnswer(_question, minWords, maxWords) {
+  // Use the prepared neutral paragraph, padded or trimmed to the word limits.
+  let text = STEP_V4_NEUTRAL_SENTENCES.join(' ');
 
   const words = () => text.split(/\s+/).filter(Boolean);
   let extra = 0;
