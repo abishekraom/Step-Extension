@@ -10,6 +10,24 @@ let pendingV4Solve = false;
 let activeV4SolveToken = '';
 let queuedV4Timer = null;
 
+const STEP_V4_NEUTRAL_SENTENCES = [
+  'The picture shows a comfortable room with several useful objects arranged neatly.',
+  'The main furniture is placed in the center, while smaller items are kept around it so that the room remains easy to use.',
+  'The lighting makes the space look bright and welcoming.',
+  'It appears clean, organized, practical, and suitable for everyday activities and relaxation.',
+];
+
+const STEP_V4_QUESTION_FRAMES = [
+  'How did you learn to make {topic}?',
+  'What ingredients do you use to make {topic}?',
+  'How long does it take to prepare {topic}?',
+  'Which spices give {topic} its special taste?',
+  'Do you make {topic} on special occasions?',
+  'What do you usually serve with {topic}?',
+  'Will you share your {topic} recipe with me?',
+  'Why is {topic} so popular with everyone?',
+];
+
 function stepExtLog(label, details) {
   if (details === undefined) {
     console.log('[StepExt]', label);
@@ -1169,6 +1187,109 @@ function stepExtV4ClozeTargets(span, question) {
     .filter(Boolean);
 }
 
+function stepExtV4GetTextarea() {
+  return Array.from(document.querySelectorAll('textarea'))
+    .find(textarea => textarea.offsetParent !== null && !textarea.disabled) || null;
+}
+
+function isStepV4LongAnswerQuestion(question) {
+  if (stepExtV4GetTextarea()) return true;
+
+  const type = String(question?.type || '').toUpperCase();
+  return type === 'LA' || type === 'LONG' || type === 'TEXT';
+}
+
+function stepExtV4ReadWordLimit(question) {
+  const counter = Array.from(document.querySelectorAll('div,span,p'))
+    .find(node => node.childElementCount === 0 &&
+      /\d+\s*\/\s*\d+\s*words?/i.test(node.textContent));
+
+  let minWords = 0;
+  if (counter) {
+    const match = counter.textContent.match(/(\d+)\s*\/\s*(\d+)\s*words?/i);
+    if (match) minWords = Number(match[2]) || 0;
+  }
+
+  const prompt = [question?.questionText, question?.prompt, question?.sourceText]
+    .filter(Boolean)
+    .join(' ');
+
+  if (!minWords) {
+    const atLeast = prompt.match(/(?:at\s+least|minimum(?:\s+of)?|not\s+less\s+than)\s+(\d+)\s+words?/i);
+    if (atLeast) minWords = Number(atLeast[1]) || 0;
+  }
+
+  let maxWords = 0;
+  const range = prompt.match(/(\d+)\s*(?:-|–|to)\s*(\d+)\s+words?/i);
+  if (range) {
+    minWords = Math.max(minWords, Number(range[1]) || 0);
+    maxWords = Number(range[2]) || 0;
+  }
+
+  if (!maxWords) {
+    const max = prompt.match(/(?:no\s+more\s+than|maximum(?:\s+of)?|up\s+to|at\s+most)\s+(\d+)\s+words?/i);
+    if (max) maxWords = Number(max[1]) || 0;
+  }
+
+  if (!maxWords) {
+    const exact = prompt.match(/\b(?:in|exactly)\s+(\d+)\s+words?/i);
+    if (exact) {
+      minWords = Math.max(minWords, Number(exact[1]) || 0);
+      maxWords = Number(exact[1]) || 0;
+    }
+  }
+
+  return {
+    minWords: Math.max(0, minWords),
+    maxWords: Math.max(0, maxWords),
+  };
+}
+
+function stepExtV4BuildLongAnswer(question, minWords, maxWords) {
+  const prompt = [question?.questionText, question?.prompt, question?.sourceText]
+    .filter(Boolean)
+    .join(' ');
+  const ask = prompt.match(/ask\s+(\d+)\s+questions?/i);
+  let text = '';
+
+  if (ask) {
+    const count = Math.min(20, Math.max(1, Number(ask[1]) || 7));
+    const about = prompt.match(/\babout\s+([^.!?]+)/i);
+    const rawTopic = about ? about[1].trim() : '';
+    const topic = rawTopic.replace(/^(her|his|their|your|my|our)\s+/i, '').trim() || 'it';
+    text = Array.from({ length: count }, (_, index) =>
+      STEP_V4_QUESTION_FRAMES[index % STEP_V4_QUESTION_FRAMES.length]
+        .replace(/\{topic\}/g, topic)
+    ).join(' ');
+  } else {
+    text = STEP_V4_NEUTRAL_SENTENCES.join(' ');
+  }
+
+  const words = () => text.split(/\s+/).filter(Boolean);
+  let extra = 0;
+  while (words().length < minWords && extra < 20) {
+    text += ' ' + STEP_V4_NEUTRAL_SENTENCES[extra % STEP_V4_NEUTRAL_SENTENCES.length];
+    extra++;
+  }
+
+  if (maxWords > 0 && words().length > maxWords) {
+    text = words().slice(0, maxWords).join(' ');
+  }
+
+  return text;
+}
+
+function stepExtV4FillTextarea(textarea, text) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+  textarea.focus();
+  if (setter) setter.call(textarea, text);
+  else textarea.value = text;
+
+  ['input', 'change', 'keydown', 'keypress', 'keyup', 'blur'].forEach(type => {
+    textarea.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+  });
+}
+
 function stepExtV4WordBankTarget(span, question) {
   const raw = (span?.dataset?.answerHint || span?.textContent || '').trim();
   const cleaned = raw.replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
@@ -1459,6 +1580,143 @@ async function autoSelectAnswerV4Speaking(span) {
         stepExtLog('V4 speaking: feedback skipped; waiting for the next payload.');
         break;
       }
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
+// ── V4 LONG ANSWER / FILL PARAGRAPH SOLVER ─────────────────────────────────
+// LA questions render a textarea with a minimum word counter. Generate a
+// prompt-aware answer, fit it to the limits, and trigger React's input handler.
+async function autoSelectAnswerV4LongAnswer(span, question) {
+  if (isSolving) {
+    stepExtLog('V4 long answer ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const safeClick = stepExtV4SafeClick;
+  const getFooterButton = stepExtV4GetFooterButton;
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let textarea = stepExtV4GetTextarea();
+    for (let attempt = 0; attempt < 60 && !textarea; attempt++) {
+      await sleep(250);
+      textarea = stepExtV4GetTextarea();
+    }
+
+    if (!textarea) {
+      stepExtLog('V4 long answer: textarea never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    // Auto-Mode can be started before the API response for this question has
+    // been ingested. Wait for the LA model instead of generating the fallback.
+    let activeQuestion = question;
+    const hasLaModel = () => {
+      const current = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
+      if (!current?.questionText) return false;
+      return String(current.type || '').toUpperCase() === 'LA' ||
+        span.dataset.noFixedAnswer === 'true';
+    };
+
+    if (hasLaModel()) {
+      activeQuestion = STEP_EXT_RESPONSE_MODEL.questions[0];
+    } else {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        await sleep(250);
+        if (hasLaModel()) {
+          activeQuestion = STEP_EXT_RESPONSE_MODEL.questions[0];
+          break;
+        }
+      }
+    }
+
+    const limits = stepExtV4ReadWordLimit(activeQuestion);
+    const required = Math.max(1, limits.minWords || 20);
+    const maxWords = limits.maxWords > 0 && limits.maxWords >= required ? limits.maxWords : 0;
+    const answerText = stepExtV4BuildLongAnswer(activeQuestion, required, maxWords);
+    const wordCount = answerText.split(/\s+/).filter(Boolean).length;
+
+    stepExtLog('V4 long answer generated:', {
+      required,
+      maxWords,
+      wordCount,
+      answerText,
+    });
+
+    const overlay = span.closest('#getStepAnswerDialog');
+    const overlayLabel = overlay?.querySelector('strong');
+    if (overlayLabel && !stepExtV4IsFeedbackVisible()) {
+      overlayLabel.textContent = 'Long Answer:';
+    }
+
+    stepExtV4FillTextarea(textarea, answerText);
+    await sleep(800);
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 60 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      const counter = Array.from(document.querySelectorAll('div,span,p'))
+        .find(node => node.childElementCount === 0 &&
+          /\d+\s*\/\s*\d+\s*words?/i.test(node.textContent));
+      stepExtLog('V4 long answer: submit stayed disabled.', {
+        required,
+        valueLength: textarea.value.length,
+        counter: counter?.textContent?.trim() || null,
+      });
+
+      // Force a fresh change event in case React ignored the first fill.
+      stepExtV4FillTextarea(textarea, '');
+      await sleep(100);
+      stepExtV4FillTextarea(textarea, answerText);
+      await sleep(600);
+
+      for (let attempt = 0; attempt < 40 && (!footerButton || footerButton.disabled); attempt++) {
+        await sleep(200);
+        footerButton = getFooterButton();
+      }
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit did not enable after typing the answer.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 long answer submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') break;
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 long answer next clicked.');
+        break;
+      }
+      if (label === 'submit') break;
     }
   } finally {
     stepExtV4SolveFinished();
@@ -1854,6 +2112,10 @@ async function autoSelectAnswerV4() {
 
   if (isStepV4WordBankQuestion(question)) {
     return autoSelectAnswerV4WordBank(span, question);
+  }
+
+  if (isStepV4LongAnswerQuestion(question)) {
+    return autoSelectAnswerV4LongAnswer(span, question);
   }
 
   if (isStepV4SpeakingQuestion(question)) {
