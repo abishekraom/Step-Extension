@@ -286,8 +286,15 @@ function stepExtV4IngestPayload(source, payload) {
   const type = String(question.type || '').toUpperCase();
   const hasFixedAnswer = question.answers.length > 0;
 
+  const feedbackVisible = stepExtV4IsFeedbackVisible();
   const label = overlay.querySelector('strong');
-  if (label) label.textContent = hasFixedAnswer ? 'Correct Answer:' : 'StepExt:';
+  if (label) {
+    if (feedbackVisible) {
+      label.textContent = hasFixedAnswer ? 'Next Answer:' : 'Next Step:';
+    } else {
+      label.textContent = hasFixedAnswer ? 'Correct Answer:' : 'StepExt:';
+    }
+  }
 
   span.dataset.noFixedAnswer = hasFixedAnswer ? 'false' : 'true';
   span.dataset.processed = 'false';
@@ -1116,6 +1123,15 @@ function stepExtV4GetFooterButton() {
     document.querySelector('footer button');
 }
 
+function stepExtV4IsFeedbackVisible() {
+  const eyebrows = Array.from(document.querySelectorAll('.ds-eyebrow'))
+    .map(node => node.textContent.trim().toLowerCase());
+  if (eyebrows.some(text => text.startsWith('feedback'))) return true;
+
+  const footerLabel = (stepExtV4GetFooterButton()?.textContent || '').trim().toLowerCase();
+  return footerLabel.includes('next') || footerLabel.includes('continue');
+}
+
 function stepExtV4SafeClick(element) {
   if (!element) return;
   ['mousedown', 'mouseup', 'click'].forEach(type => {
@@ -1159,7 +1175,6 @@ async function autoSelectAnswerV4Speaking(span) {
 
   isSolving = true;
   activeV4SolveToken = lastV4AnswerToken;
-  const solveToken = lastV4AnswerToken;
   try {
     let button = stepExtV4FindRecorderButton();
     for (let attempt = 0; attempt < 60 && !button; attempt++) {
@@ -1273,11 +1288,6 @@ async function autoSelectAnswerV4Speaking(span) {
     while (Date.now() - submitAt < 12000) {
       await sleep(200);
 
-      if (lastV4AnswerToken !== solveToken) {
-        stepExtLog('V4 speaking: next question payload detected; releasing the solve lock.');
-        break;
-      }
-
       const candidate = getFooterButton();
       if (!candidate) continue;
       const label = candidate.textContent.trim().toLowerCase();
@@ -1290,7 +1300,7 @@ async function autoSelectAnswerV4Speaking(span) {
         continue;
       }
 
-      if (label.includes('next')) {
+      if (label.includes('next') || label.includes('continue')) {
         safeClick(candidate);
         stepExtLog('V4 speaking: next clicked.');
         break;
@@ -1323,6 +1333,13 @@ async function autoSelectAnswerV4() {
   if (queuedV4Timer) {
     clearTimeout(queuedV4Timer);
     queuedV4Timer = null;
+  }
+
+  // Once the feedback card is gone, the answer shown belongs to the question
+  // that is now on screen.
+  if (!stepExtV4IsFeedbackVisible() && span.dataset.answerHint) {
+    const label = overlay.querySelector('strong');
+    if (label) label.textContent = 'Correct Answer:';
   }
 
   span.dataset.processed = 'true';
@@ -1402,7 +1419,6 @@ async function autoSelectAnswerV4() {
 
   isSolving = true;
   activeV4SolveToken = lastV4AnswerToken;
-  const solveToken = lastV4AnswerToken;
   try {
     // Wait for the SPA to settle on this question. During a question
     // transition the previous question's choices can still be in the DOM,
@@ -1514,11 +1530,6 @@ async function autoSelectAnswerV4() {
     while (Date.now() - submitAt < 10000) {
       await sleep(200);
 
-      if (lastV4AnswerToken !== solveToken) {
-        stepExtLog('V4 next question payload detected; releasing the solve lock.');
-        break;
-      }
-
       const candidate = getFooterButton();
       if (!candidate) continue;
       const label = candidate.textContent.trim().toLowerCase();
@@ -1531,7 +1542,7 @@ async function autoSelectAnswerV4() {
         continue;
       }
 
-      if (label.includes('next')) {
+      if (label.includes('next') || label.includes('continue')) {
         safeClick(candidate);
         stepExtLog('V4 next clicked.');
         break;
