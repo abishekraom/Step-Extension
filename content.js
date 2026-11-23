@@ -216,11 +216,15 @@ function stepExtV4ResolveChoiceLabel(question, answer) {
   const wanted = String(answer ?? '').trim().toLowerCase();
   if (!wanted) return null;
 
-  for (const [key, value] of Object.entries(choices)) {
+  const entries = Object.entries(choices)
+    .filter(([, value]) => String(value ?? '').trim() !== '');
+
+  for (let index = 0; index < entries.length; index++) {
+    const [key, value] = entries[index];
     const text = String(value ?? '').trim();
-    if (!text) continue;
     if (text.toLowerCase() === wanted || key.toLowerCase() === wanted) {
-      return { key, text };
+      // API keys can be 0-based ("3") while the UI labels the choices A-D.
+      return { key, displayKey: String.fromCharCode(65 + index), text };
     }
   }
 
@@ -233,7 +237,7 @@ function stepExtV4FormatAnswers(question) {
 
   return answers.map(answer => {
     const choice = stepExtV4ResolveChoiceLabel(question, answer);
-    return choice ? `${choice.key}. ${choice.text}` : String(answer);
+    return choice ? `${choice.displayKey || choice.key}. ${choice.text}` : String(answer);
   }).join(' | ');
 }
 
@@ -269,6 +273,9 @@ function stepExtV4IngestPayload(source, payload) {
   const formatted = stepExtV4FormatAnswers(question);
   const type = String(question.type || '').toUpperCase();
   const hasFixedAnswer = question.answers.length > 0;
+
+  const label = overlay.querySelector('strong');
+  if (label) label.textContent = hasFixedAnswer ? 'Correct Answer:' : 'StepExt:';
 
   span.dataset.noFixedAnswer = hasFixedAnswer ? 'false' : 'true';
   span.dataset.processed = 'false';
@@ -1151,7 +1158,7 @@ async function autoSelectAnswerV4() {
     const targets = [];
     for (const answer of expectedAnswers) {
       const resolved = stepExtV4ResolveChoiceLabel(question, answer);
-      const candidates = [String(answer), resolved?.text, resolved?.key].filter(Boolean);
+      const candidates = [String(answer), resolved?.text, resolved?.key, resolved?.displayKey].filter(Boolean);
       const match = choiceInfo.find(choice => {
         if (targets.includes(choice)) return false;
         return candidates.some(candidate =>
