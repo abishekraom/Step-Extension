@@ -1260,6 +1260,14 @@ function stepExtV4FillTextarea(textarea, text) {
   });
 }
 
+function stepExtV4HasQuestionInput() {
+  return !!document.querySelector('button.choice') ||
+    !!document.querySelector('[data-testid^="cloze-blank-"]') ||
+    !!stepExtV4GetWordBankContainer() ||
+    !!stepExtV4GetTextarea() ||
+    !!stepExtV4FindRecorderButton();
+}
+
 function stepExtV4WordBankTarget(span, question) {
   const raw = (span?.dataset?.answerHint || span?.textContent || '').trim();
   const cleaned = raw.replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
@@ -2079,6 +2087,23 @@ async function autoSelectAnswerV4() {
   if (!stepExtV4IsFeedbackVisible() && span.dataset.answerHint) {
     const label = overlay.querySelector('strong');
     if (label) label.textContent = 'Correct Answer:';
+  }
+
+  // Video-confirmation steps have no answer widgets, just an enabled footer
+  // that advances the lesson. Ignore the synthetic "Next" answer and click it.
+  if (!stepExtV4HasQuestionInput()) {
+    const footer = stepExtV4GetFooterButton();
+    const footerLabel = (footer?.textContent || '').trim().toLowerCase();
+    if (footer && !footer.disabled &&
+        (footerLabel === 'submit' || footerLabel.includes('next') || footerLabel.includes('continue'))) {
+      const overlayLabel = overlay.querySelector('strong');
+      if (overlayLabel) overlayLabel.textContent = 'Confirmation:';
+      span.textContent = 'Click the footer to continue.';
+      stepExtLog('V4 confirmation page: clicking the footer button.', { label: footerLabel });
+      stepExtV4SafeClick(footer);
+      span.dataset.processed = 'true';
+      return;
+    }
   }
 
   span.dataset.processed = 'true';
