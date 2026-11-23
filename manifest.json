@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "GET Step Answer V3.5",
-  "version": "3.5",
+  "name": "GET Step Answer V4",
+  "version": "4.0",
   "description": "Fetches and displays data from an API and supports on-demand overlay toggle. (Just modified by IhvCutegirl)",
-  "permissions": ["storage"],
+  "permissions": ["storage", "alarms"],
   "host_permissions": [
     "https://english.steptest.in/*",
     "https://api.steptest.in/*",
