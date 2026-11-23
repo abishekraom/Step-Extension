@@ -1118,6 +1118,46 @@ function isStepV4SpeakingQuestion(question) {
   return domain === 'S' || type === 'S' || subType === 'S';
 }
 
+function stepExtV4FindLabel(text) {
+  const wanted = String(text || '').toLowerCase();
+  return Array.from(document.querySelectorAll('div,span'))
+    .find(node => node.childElementCount === 0 &&
+      node.textContent.trim().toLowerCase() === wanted) || null;
+}
+
+function stepExtV4GetWordBankContainer() {
+  const label = stepExtV4FindLabel('word bank');
+  return label?.nextElementSibling || null;
+}
+
+function stepExtV4GetSentenceContainer() {
+  const label = stepExtV4FindLabel('your sentence');
+  return label?.nextElementSibling || null;
+}
+
+function isStepV4WordBankQuestion(question) {
+  if (stepExtV4GetWordBankContainer()) return true;
+
+  const type = String(question?.type || '').toLowerCase();
+  const subType = String(question?.subType || '').toLowerCase();
+  return type.includes('wordcloud') || subType.includes('wordcloud') ||
+    type.includes('word bank') || subType.includes('word bank');
+}
+
+function stepExtV4WordBankTarget(span, question) {
+  const raw = (span?.dataset?.answerHint || span?.textContent || '').trim();
+  const cleaned = raw.replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
+  if (cleaned && !/awaiting api|answer not found|no fixed answer/i.test(cleaned)) {
+    return cleaned;
+  }
+
+  const answer = question?.answers?.[0] || '';
+  if (!answer) return '';
+
+  const resolved = stepExtV4ResolveChoiceLabel(question, answer);
+  return String(resolved?.text || answer).replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
+}
+
 function stepExtV4GetFooterButton() {
   return document.querySelector('footer.player-foot button') ||
     document.querySelector('footer button');
@@ -1154,6 +1194,69 @@ function stepExtV4SolveFinished() {
     queuedV4Timer = null;
     autoSelectAnswer();
   }, 250);
+}
+
+async function stepExtV4RecordVirtualTake() {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const recorderLabel = () => (stepExtV4FindRecorderButton()?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  let button = stepExtV4FindRecorderButton();
+  if (!button) return true;
+  if (/re-record/i.test(button.textContent || '')) return true;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!/tap to record/i.test(recorderLabel())) {
+      await sleep(500);
+    }
+
+    const startButton = stepExtV4FindRecorderButton();
+    if (!startButton || !/tap to record/i.test(startButton.textContent || '')) {
+      return false;
+    }
+    if (startButton.disabled) return false;
+
+    stepExtV4SafeClick(startButton);
+
+    for (let wait = 0; wait < 40; wait++) {
+      await sleep(200);
+      if (/stop|saving/i.test(recorderLabel())) break;
+    }
+
+    window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'PLAY' }, '*');
+    await sleep(300);
+
+    const duration = Number.isFinite(VIRTUAL_AUDIO_DURATION) && VIRTUAL_AUDIO_DURATION > 0
+      ? VIRTUAL_AUDIO_DURATION
+      : 5;
+    await sleep(Math.max(2.6, duration + 0.8) * 1000);
+
+    const stopButton = stepExtV4FindRecorderButton();
+    if (stopButton && /stop/i.test(stopButton.textContent || '')) {
+      stepExtV4SafeClick(stopButton);
+    }
+
+    for (let wait = 0; wait < 80; wait++) {
+      await sleep(250);
+      const current = recorderLabel();
+      if (/re-record/i.test(current)) {
+        window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'STOP' }, '*');
+        return true;
+      }
+      if (/try again/i.test(current)) {
+        stepExtV4SafeClick(stepExtV4FindRecorderButton());
+        await sleep(400);
+        break;
+      }
+      if (/tap to record/i.test(current)) break;
+    }
+
+    window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'STOP' }, '*');
+    await sleep(300);
+  }
+
+  return /re-record/i.test(recorderLabel());
 }
 
 // ── V4 SPEAKING / RECORD SOLVER ──────────────────────────────────────────────
@@ -1315,6 +1418,188 @@ async function autoSelectAnswerV4Speaking(span) {
   }
 }
 
+// ── V4 WORD BANK SOLVER ──────────────────────────────────────────────────────
+// Word bank questions render shuffled chip buttons plus a "Your sentence"
+// target. Some lessons also require a recording after the sentence is built.
+async function autoSelectAnswerV4WordBank(span, question) {
+  if (isSolving) {
+    stepExtLog('V4 word bank ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const normalize = value => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const superClean = value => normalize(value).replace(/[^a-z0-9]/g, '');
+  const safeClick = stepExtV4SafeClick;
+  const getFooterButton = stepExtV4GetFooterButton;
+
+  const target = stepExtV4WordBankTarget(span, question);
+  if (!target) {
+    stepExtLog('V4 word bank: no target sentence.');
+    span.dataset.processed = 'true';
+    return;
+  }
+
+  const getBankButtons = () => {
+    const container = stepExtV4GetWordBankContainer();
+    return container ? Array.from(container.querySelectorAll('button')) : [];
+  };
+  const getSentenceText = () => {
+    const placed = Array.from(document.querySelectorAll('[data-testid^="placed-"]'))
+      .map(node => node.textContent.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    if (placed.length) return placed.join(' ');
+    const container = stepExtV4GetSentenceContainer();
+    return (container?.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  const findChip = (buttons, remaining) => {
+    const normalizedRemaining = normalize(remaining);
+    const cleanRemaining = superClean(remaining);
+    let best = null;
+
+    for (const button of buttons) {
+      const text = button.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+
+      const normalizedText = normalize(text);
+      const cleanText = superClean(text);
+      if (!normalizedText || !cleanText) continue;
+
+      let consumed = 0;
+      if (normalizedRemaining.startsWith(normalizedText)) {
+        consumed = text.length;
+      } else if (cleanRemaining.startsWith(cleanText)) {
+        const wordCount = text.split(/\s+/).length;
+        consumed = remaining.split(/\s+/).slice(0, wordCount).join(' ').length;
+      }
+
+      if (!consumed) continue;
+
+      const score = cleanText.length;
+      if (!best || score > best.score) {
+        best = { button, text, consumed, score };
+      }
+    }
+
+    return best;
+  };
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let bank = [];
+    for (let attempt = 0; attempt < 60; attempt++) {
+      bank = getBankButtons();
+      if (bank.length) break;
+      await sleep(250);
+    }
+
+    if (!bank.length) {
+      stepExtLog('V4 word bank: chips never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    const targetNorm = superClean(target);
+    const current = getSentenceText();
+    if (superClean(current) !== targetNorm && !/tap chips below/i.test(current)) {
+      const reset = Array.from(document.querySelectorAll('button'))
+        .find(button => button.textContent.trim().toLowerCase() === 'reset');
+      if (reset) {
+        safeClick(reset);
+        await sleep(350);
+      }
+    }
+
+    let remaining = target.replace(/\s+/g, ' ').trim();
+    const clicked = [];
+
+    for (let step = 0; step < 40 && remaining; step++) {
+      bank = getBankButtons();
+      if (!bank.length) break;
+
+      const match = findChip(bank, remaining);
+      if (!match) {
+        stepExtLog('V4 word bank: no chip matches the next part.', {
+          remaining,
+          bank: bank.map(button => button.textContent.trim()),
+        });
+        break;
+      }
+
+      safeClick(match.button);
+      clicked.push(match.text);
+      remaining = remaining.slice(match.consumed).trim();
+      await sleep(300);
+    }
+
+    const built = getSentenceText();
+    stepExtLog('V4 word bank built:', { target, built, clicked });
+    if (superClean(built) !== targetNorm) {
+      showStepErrorDialog('Word bank sentence did not match.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    // Domain S word banks ask for the sentence to be recorded after it is built.
+    let recorder = stepExtV4FindRecorderButton();
+    for (let attempt = 0; attempt < 20 && !recorder; attempt++) {
+      await sleep(250);
+      recorder = stepExtV4FindRecorderButton();
+    }
+    if (recorder) {
+      const recorded = await stepExtV4RecordVirtualTake();
+      if (!recorded) {
+        stepExtLog('V4 word bank: recording was not accepted.');
+        showStepErrorDialog('Word bank recording was not accepted.');
+        span.dataset.processed = 'true';
+        return;
+      }
+    }
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 60 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit button did not enable after building the sentence.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 word bank submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') break;
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 word bank next clicked.');
+        break;
+      }
+      if (label === 'submit') break;
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
 // ── V4 SINGLE / MULTI CHOICE SOLVER ──────────────────────────────────────────
 // v4 renders choices as button.choice elements and a single footer button that
 // reads Submit, then Next -> after feedback. There is no #testSubmit anymore.
@@ -1345,6 +1630,10 @@ async function autoSelectAnswerV4() {
   span.dataset.processed = 'true';
 
   const question = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
+
+  if (isStepV4WordBankQuestion(question)) {
+    return autoSelectAnswerV4WordBank(span, question);
+  }
 
   if (isStepV4SpeakingQuestion(question)) {
     return autoSelectAnswerV4Speaking(span);
