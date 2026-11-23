@@ -1,9 +1,7 @@
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.set({ isEnabled: true, overlayHidden: false });
-  checkForUpdates({ force: true });
-});
-
+const DEFAULT_STATE = { isEnabled: true, overlayHidden: false };
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const UPDATE_ALARM_NAME = 'stepExtUpdateCheck';
+const UPDATE_ALARM_PERIOD_MINUTES = 6 * 60;
 const LATEST_RELEASE_API = 'https://api.github.com/repos/abishekraom/Step-Extension/releases/latest';
 const RELEASES_URL = 'https://github.com/abishekraom/Step-Extension/releases';
 
@@ -35,6 +33,44 @@ function extractReleaseVersion(release) {
   return '';
 }
 
+function extractReleaseName(release) {
+  return String(release?.name || release?.tag_name || '').trim();
+}
+
+function getReleasePublishedAt(release) {
+  const parsed = Date.parse(release?.published_at || release?.created_at || '');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+// A release counts as an update when either:
+// 1. Its version is greater than the installed manifest version, or
+// 2. It was published after this build was installed. The second rule is what
+//    makes every release notify, including tags like "V4" against a manifest
+//    version of "4.0" (equal semver) and re-releases that reuse a version.
+function analyzeRelease(release, currentVersion, installedAt) {
+  const latestVersion = extractReleaseVersion(release);
+  const versionIsNewer = !!latestVersion && compareVersions(latestVersion, currentVersion) > 0;
+  const publishedAt = getReleasePublishedAt(release);
+  const publishedAfterInstall = installedAt > 0 && publishedAt > 0 && publishedAt > installedAt;
+
+  return {
+    latestVersion,
+    publishedAt,
+    updateAvailable: versionIsNewer || publishedAfterInstall,
+  };
+}
+
+async function getInstalledAt() {
+  const { installedAt } = await chrome.storage.local.get('installedAt');
+  if (Number.isFinite(installedAt) && installedAt > 0) return installedAt;
+
+  // Existing installs from before this field existed get a baseline of "now" so
+  // only releases published after this point count as new.
+  const now = Date.now();
+  await chrome.storage.local.set({ installedAt: now });
+  return now;
+}
+
 async function updateBadge(updateAvailable) {
   await chrome.action.setBadgeBackgroundColor({ color: '#dc3545' });
   await chrome.action.setBadgeText({ text: updateAvailable ? 'UP' : '' });
@@ -51,6 +87,8 @@ async function checkForUpdates({ force = false } = {}) {
     return updateStatus;
   }
 
+  const installedAt = await getInstalledAt();
+
   try {
     const response = await fetch(LATEST_RELEASE_API, {
       headers: { Accept: 'application/vnd.github+json' },
@@ -61,15 +99,20 @@ async function checkForUpdates({ force = false } = {}) {
     }
 
     const release = await response.json();
-    const latestVersion = extractReleaseVersion(release);
-    if (!latestVersion) throw new Error('Latest release did not include a version tag.');
+    if (!release?.tag_name && !release?.name) {
+      throw new Error('Latest release did not include a tag or name.');
+    }
 
+    const releaseCheck = analyzeRelease(release, currentVersion, installedAt);
     const status = {
       checkedAt: Date.now(),
       currentVersion,
-      latestVersion,
+      installedAt,
+      latestVersion: releaseCheck.latestVersion,
+      latestReleaseName: extractReleaseName(release),
+      publishedAt: releaseCheck.publishedAt,
       releaseUrl: release.html_url || RELEASES_URL,
-      updateAvailable: compareVersions(latestVersion, currentVersion) > 0,
+      updateAvailable: releaseCheck.updateAvailable,
     };
 
     await chrome.storage.local.set({ updateStatus: status });
@@ -83,7 +126,10 @@ async function checkForUpdates({ force = false } = {}) {
     return {
       checkedAt: null,
       currentVersion,
+      installedAt,
       latestVersion: null,
+      latestReleaseName: '',
+      publishedAt: null,
       releaseUrl: RELEASES_URL,
       updateAvailable: false,
       error: error.message,
@@ -91,8 +137,29 @@ async function checkForUpdates({ force = false } = {}) {
   }
 }
 
+function scheduleUpdateChecks() {
+  chrome.alarms?.create?.(UPDATE_ALARM_NAME, {
+    delayInMinutes: UPDATE_ALARM_PERIOD_MINUTES,
+    periodInMinutes: UPDATE_ALARM_PERIOD_MINUTES,
+  });
+}
+
+chrome.runtime.onInstalled.addListener(details => {
+  chrome.storage.local.set(DEFAULT_STATE);
+  if (details?.reason === 'install' || details?.reason === 'update') {
+    chrome.storage.local.set({ installedAt: Date.now() });
+  }
+  scheduleUpdateChecks();
+  checkForUpdates({ force: true });
+});
+
 chrome.runtime.onStartup.addListener(() => {
-  checkForUpdates();
+  scheduleUpdateChecks();
+  checkForUpdates({ force: true });
+});
+
+chrome.alarms?.onAlarm?.addListener(alarm => {
+  if (alarm?.name === UPDATE_ALARM_NAME) checkForUpdates({ force: true });
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

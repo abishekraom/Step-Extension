@@ -29,8 +29,10 @@ function renderUpdateStatus(status) {
     return;
   }
 
+  const releaseLabel = status.latestReleaseName ||
+    (status.latestVersion ? `Version ${status.latestVersion}` : 'A new release');
   updateMessage.textContent =
-    `Version V${status.latestVersion} is available. Download it and replace your current extension files.`;
+    `${releaseLabel} is available. Download it and replace your current extension files.`;
   updateLink.href = status.releaseUrl || updateLink.href;
   updateNotice.style.display = 'block';
 }

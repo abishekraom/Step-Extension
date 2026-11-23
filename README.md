@@ -77,3 +77,8 @@
 - Small Bug fixes
 - Scoped the extension to Step only.
 - Added Update Notification
+
+### Changelogs V4
+
+- Updated to new version of STEP (some question types maybe broken pls open a issue or update the code yourself and drop a pr)
+- Small Bug fixes

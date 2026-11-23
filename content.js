@@ -4,6 +4,15 @@ const _0x251abb=_0x3cae;(function(_0x39b4ca,_0x4471ad){const _0x57051c=_0x3cae,_
 // Inspect the existing fetch-attempt response without changing its request.
 let STEP_EXT_RESPONSE_MODEL = null;
 let STEP_EXT_LINKED_ANSWERS = [];
+const STEP_V4_LESSON_PATH = /^\/learn\//;
+let lastV4AnswerToken = '';
+let pendingV4Solve = false;
+let activeV4SolveToken = '';
+let queuedV4Timer = null;
+
+const STEP_V4_LONG_ANSWER_FILLER = 'bing bong ding dong unga bunga go go ha ha lelo rvce gay iptc magic words fly high chicken dinner victory royale skibidi toilet rizzler gyatt sigma fanum tax over the moon under the sea across the galaxy into the void where shadows dance and pixels play for a thousand years of pure chaos in the matrix of destiny with tacos and lasers for everyone forever and ever amen hallelujah it works like magic boom shackalacka';
+
+
 
 function stepExtLog(label, details) {
   if (details === undefined) {
@@ -29,6 +38,7 @@ function stepExtBuildResponseModel(payload) {
   return {
     attemptId: payload?.data?.attempt?.attempt_id,
     questionCount: payload?.data?.question_count,
+    answerCount: payload?.data?.answer_count,
     questions: nextQuestions.map((question, index) => {
       const numberedAnswers = Object.keys(question || {})
         .filter(key => /^correct_answer_\d+$/.test(key))
@@ -41,9 +51,14 @@ function stepExtBuildResponseModel(payload) {
         questionId: question?.question_id,
         type: question?.type,
         subType: question?.ques_sub_type,
+        domain: question?.domain,
         linkedQuestionId: question?.linked_question_id,
         linkedAnswerId: question?.linked_answer_id,
-        questionText: question?.question,
+        questionText: question?.question || question?.prompt || '',
+        prompt: question?.prompt || question?.question || '',
+        sourceText: question?.source_text_or_html || '',
+        choices: question?.choices && typeof question.choices === 'object' ? question.choices : {},
+        imgChoices: question?.imgchoices && typeof question.imgchoices === 'object' ? question.imgchoices : {},
         numberedAnswers,
         correctAnswers,
         answers: correctAnswers.length ? correctAnswers : numberedAnswers,
@@ -186,6 +201,196 @@ function stepExtPublishParsedAnswers() {
   };
 })();
 
+// ── V4 LESSON PLAYER BRIDGE ──────────────────────────────────────────────────
+// The v4 frontend is a React app served on /learn/... that calls the same
+// api.steptest.in/v1 endpoints through an XHR based axios client. The old
+// window.fetch hook never sees those responses, so inject.js mirrors them here.
+function isStepV4LessonPage() {
+  return STEP_V4_LESSON_PATH.test(window.location.pathname);
+}
+
+function stepExtV4ChoiceText(button) {
+  if (!button) return '';
+  const contentSpan = Array.from(button.children)
+    .filter(child => child.tagName === 'SPAN' &&
+      !child.classList.contains('key') &&
+      child.getAttribute('aria-hidden') !== 'true')
+    .find(child => child.textContent.trim());
+  const raw = contentSpan?.textContent || button.textContent || '';
+  return raw.replace(/^[A-Z]\.\s*/, '').trim();
+}
+
+function stepExtV4ResolveChoiceLabel(question, answer) {
+  const choices = question?.choices && typeof question.choices === 'object'
+    ? question.choices
+    : {};
+  const wanted = String(answer ?? '').trim().toLowerCase();
+  if (!wanted) return null;
+
+  const entries = Object.entries(choices)
+    .filter(([, value]) => String(value ?? '').trim() !== '');
+
+  for (let index = 0; index < entries.length; index++) {
+    const [key, value] = entries[index];
+    const text = String(value ?? '').trim();
+    if (text.toLowerCase() === wanted || key.toLowerCase() === wanted) {
+      // API keys can be 0-based ("3") while the UI labels the choices A-D.
+      return { key, displayKey: String.fromCharCode(65 + index), text };
+    }
+  }
+
+  return null;
+}
+
+function stepExtV4FormatAnswers(question) {
+  const answers = question?.answers || [];
+  if (!answers.length) return '';
+
+  return answers.map(answer => {
+    const choice = stepExtV4ResolveChoiceLabel(question, answer);
+    return choice ? `${choice.displayKey || choice.key}. ${choice.text}` : String(answer);
+  }).join(' | ');
+}
+
+function stepExtV4QuestionToken(model, question) {
+  return [
+    model?.attemptId,
+    model?.answerCount,
+    question?.questionId,
+    question?.answers?.join('|'),
+  ]
+    .filter(value => value !== undefined && value !== null && value !== '')
+    .join('::');
+}
+
+function stepExtV4IngestPayload(source, payload) {
+  const model = stepExtBuildResponseModel(payload);
+  const question = model.questions[0];
+  if (!question) return;
+
+  const token = stepExtV4QuestionToken(model, question);
+  if (token && token === lastV4AnswerToken) {
+    stepExtLog('V4 duplicate payload ignored:', { source, token });
+    return;
+  }
+
+  const overlay = stepExtEnsureOverlay();
+  const span = overlay?.querySelector('span');
+  if (!span) return;
+
+  lastV4AnswerToken = token;
+  STEP_EXT_RESPONSE_MODEL = model;
+
+  if (isSolving) {
+    pendingV4Solve = true;
+    stepExtLog('V4 new question ingested during a solve; queued it.');
+  }
+
+  const formatted = stepExtV4FormatAnswers(question);
+  const type = String(question.type || '').toUpperCase();
+  const hasFixedAnswer = question.answers.length > 0;
+
+  const feedbackVisible = stepExtV4IsFeedbackVisible();
+  const label = overlay.querySelector('strong');
+  if (label) {
+    if (feedbackVisible) {
+      label.textContent = hasFixedAnswer ? 'Next Answer:' : 'Next Step:';
+    } else {
+      label.textContent = hasFixedAnswer ? 'Correct Answer:' : 'StepExt:';
+    }
+  }
+
+  span.dataset.noFixedAnswer = hasFixedAnswer ? 'false' : 'true';
+  span.dataset.processed = 'false';
+
+  if (hasFixedAnswer) {
+    span.textContent = formatted || 'Answer not found in API response.';
+    span.dataset.answerHint = formatted;
+  } else if (type === 'LA') {
+    span.textContent = 'No fixed answer - a long response will be generated.';
+    delete span.dataset.answerHint;
+  } else {
+    span.textContent = formatted || 'No answer found in API response.';
+    delete span.dataset.answerHint;
+  }
+
+  stepExtLog('V4 answer ingested:', {
+    source,
+    attemptId: model.attemptId,
+    questionId: question.questionId,
+    questionNo: model.answerCount,
+    type: question.type,
+    subType: question.subType,
+    answers: question.answers,
+    formatted,
+    choices: question.choices,
+    questionText: question.questionText,
+  });
+}
+
+const pendingV4AttemptFetches = new Set();
+
+async function stepExtV4RefreshAttempt(url) {
+  if (!url || pendingV4AttemptFetches.has(url)) return;
+  pendingV4AttemptFetches.add(url);
+
+  try {
+    let token = '';
+    try {
+      token = localStorage.getItem('token') || '';
+    } catch (_) {}
+
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { 'access-token': token } : {}),
+      },
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const payload = await response.json();
+    stepExtV4IngestPayload('refetch', payload);
+  } catch (error) {
+    console.warn('[StepExt] V4 attempt re-fetch failed:', error);
+  } finally {
+    pendingV4AttemptFetches.delete(url);
+  }
+}
+
+function stepExtV4WatchResources() {
+  const seen = new Set();
+
+  const handleEntry = entry => {
+    const name = entry?.name || '';
+    if (!name || seen.has(name)) return;
+    if (!/\/v1\/fetchattempt\//.test(name)) return;
+    seen.add(name);
+    stepExtV4RefreshAttempt(name);
+  };
+
+  try {
+    performance.getEntriesByType('resource').forEach(handleEntry);
+  } catch (_) {}
+
+  if (typeof PerformanceObserver !== 'function') return;
+
+  try {
+    new PerformanceObserver(list => list.getEntries().forEach(handleEntry))
+      .observe({ entryTypes: ['resource'] });
+  } catch (_) {}
+}
+
+window.addEventListener('message', (event) => {
+  if (event.data?.type !== 'STEP_EXT_API_DATA') return;
+  if (!isStepV4LessonPage()) return;
+  stepExtV4IngestPayload(event.data.url || 'xhr', event.data.payload);
+});
+
+if (isStepV4LessonPage()) {
+  stepExtV4WatchResources();
+}
+
 let VIRTUAL_AUDIO_DURATION = 5;
 
 (function injectMicHook() {
@@ -227,25 +432,38 @@ try {
   });
 } catch (_) {}
 
+// ── OVERLAY CREATION (legacy /test and v4 /learn player) ─────────────────────
+function stepExtEnsureOverlay() {
+    const existing = document.getElementById('getStepAnswerDialog');
+    if (existing) return existing;
+
+    const isLegacyTest = window.location.href.includes('steptest.in/test');
+    if (!isLegacyTest && !isStepV4LessonPage()) return null;
+
+    if (!document.body) {
+        document.addEventListener('DOMContentLoaded', stepExtEnsureOverlay, { once: true });
+        return null;
+    }
+
+    const dialog = document.createElement('div');
+    dialog.id = 'getStepAnswerDialog';
+    const top = isStepV4LessonPage() ? 64 : 10;
+    dialog.style.cssText = `position:fixed; top:${top}px; right:10px; background:white; color:#111; padding:10px 12px; border:1px solid black; border-radius:6px; z-index:9999; box-shadow:0 4px 6px rgba(0,0,0,0.1); font-family:sans-serif; min-width:180px; max-width:360px;`;
+    document.body.appendChild(dialog);
+    dialog.innerHTML = '<strong>Awaiting API...</strong> <span></span>';
+    console.log('[StepExt] Overlay initialized.');
+    return dialog;
+}
+
 // ── ROBUST INITIALIZATION AND WRAPPER ─────────────────────────────────────────
 (function robustInit() {
-    // 1. Ensure overlay exists immediately on test pages for UI access
-    function ensureOverlayExists() {
-        if (!document.getElementById('getStepAnswerDialog') && window.location.href.includes('steptest.in/test')) {
-            const dialog = document.createElement('div');
-            dialog.id = 'getStepAnswerDialog';
-            dialog.style.cssText = 'position:fixed; top:10px; right:10px; background:white; padding:10px; border:1px solid black; z-index:9999; box-shadow:0 4px 6px rgba(0,0,0,0.1); font-family: sans-serif; min-width: 150px;';
-            document.body.appendChild(dialog);
-            dialog.innerHTML = '<strong>Awaiting API...</strong> <span></span>';
-            console.log('[StepExt] Overlay initialized.');
-        }
-    }
-    ensureOverlayExists();
+    // 1. Ensure overlay exists immediately on supported pages for UI access
+    stepExtEnsureOverlay();
 
     // 2. Wrap the fetcher to manage state and handle broken questions
     const origFetch = window.fetchApiData;
     window.fetchApiData = async function() {
-        ensureOverlayExists();
+        stepExtEnsureOverlay();
         const overlay = document.getElementById('getStepAnswerDialog');
         if (overlay) {
             const span = overlay.querySelector('span');
@@ -321,6 +539,10 @@ function showStepErrorDialog(msg) {
 }
 
 async function autoSelectAnswer() {
+  if (isStepV4LessonPage()) {
+    return autoSelectAnswerV4();
+  }
+
   if (isSolving) {
     stepExtLog('Auto-select ignored because another solve is already running.');
     return;
@@ -884,6 +1106,1233 @@ async function autoSelectAnswer() {
   }
 }
 
+// ── V4 SHARED HELPERS ────────────────────────────────────────────────────────
+function stepExtV4FindRecorderButton() {
+  return Array.from(document.querySelectorAll('button'))
+    .find(button => /tap to record|stop|re-record|saving|try again/i.test(button.textContent || '')) || null;
+}
+
+function isStepV4SpeakingQuestion(question) {
+  if (document.querySelector('[data-testid="live-mic-visualizer"]')) return true;
+  if (stepExtV4FindRecorderButton()) return true;
+
+  const type = String(question?.type || '').toUpperCase();
+  const subType = String(question?.subType || '').toUpperCase();
+  const domain = String(question?.domain || '').toUpperCase();
+  return domain === 'S' || type === 'S' || subType === 'S';
+}
+
+function stepExtV4FindLabel(text) {
+  const wanted = String(text || '').toLowerCase();
+  return Array.from(document.querySelectorAll('div,span'))
+    .find(node => node.childElementCount === 0 &&
+      node.textContent.trim().toLowerCase() === wanted) || null;
+}
+
+function stepExtV4GetWordBankContainer() {
+  const label = stepExtV4FindLabel('word bank');
+  return label?.nextElementSibling || null;
+}
+
+function stepExtV4GetSentenceContainer() {
+  const label = stepExtV4FindLabel('your sentence');
+  return label?.nextElementSibling || null;
+}
+
+function isStepV4WordBankQuestion(question) {
+  if (stepExtV4GetWordBankContainer()) return true;
+
+  const type = String(question?.type || '').toLowerCase();
+  const subType = String(question?.subType || '').toLowerCase();
+  return type.includes('wordcloud') || subType.includes('wordcloud') ||
+    type.includes('word bank') || subType.includes('word bank');
+}
+
+function isStepV4ClozeQuestion(question) {
+  if (document.querySelector('[data-testid^="cloze-blank-"]')) return true;
+
+  const type = String(question?.type || '').toLowerCase();
+  const subType = String(question?.subType || '').toLowerCase();
+  return type.includes('cloze') || subType.includes('cloze') ||
+    type.includes('fill') || subType.includes('fill');
+}
+
+function stepExtV4ClozeTargets(span, question) {
+  const rawAnswers = Array.isArray(question?.answers) && question.answers.length
+    ? question.answers
+    : String(span?.dataset?.answerHint || span?.textContent || '')
+        .split(/[|#]/)
+        .map(value => value.trim())
+        .filter(Boolean);
+
+  return rawAnswers
+    .map(answer => {
+      const resolved = stepExtV4ResolveChoiceLabel(question, answer);
+      return String(resolved?.text || answer).replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
+    })
+    .filter(Boolean);
+}
+
+function stepExtV4GetTextarea() {
+  return Array.from(document.querySelectorAll('textarea'))
+    .find(textarea => textarea.offsetParent !== null && !textarea.disabled) || null;
+}
+
+function isStepV4LongAnswerQuestion(question) {
+  if (stepExtV4GetTextarea()) return true;
+
+  const type = String(question?.type || '').toUpperCase();
+  return type === 'LA' || type === 'LONG' || type === 'TEXT';
+}
+
+function stepExtV4ReadWordLimit(question) {
+  const counter = Array.from(document.querySelectorAll('div,span,p'))
+    .find(node => node.childElementCount === 0 &&
+      /\d+\s*\/\s*\d+\s*words?/i.test(node.textContent));
+
+  let minWords = 0;
+  if (counter) {
+    const match = counter.textContent.match(/(\d+)\s*\/\s*(\d+)\s*words?/i);
+    if (match) minWords = Number(match[2]) || 0;
+  }
+
+  const prompt = [question?.questionText, question?.prompt, question?.sourceText]
+    .filter(Boolean)
+    .join(' ');
+
+  if (!minWords) {
+    const atLeast = prompt.match(/(?:at\s+least|minimum(?:\s+of)?|not\s+less\s+than)\s+(\d+)\s+words?/i);
+    if (atLeast) minWords = Number(atLeast[1]) || 0;
+  }
+
+  let maxWords = 0;
+  const range = prompt.match(/(\d+)\s*(?:-|–|to)\s*(\d+)\s+words?/i);
+  if (range) {
+    minWords = Math.max(minWords, Number(range[1]) || 0);
+    maxWords = Number(range[2]) || 0;
+  }
+
+  if (!maxWords) {
+    const max = prompt.match(/(?:no\s+more\s+than|maximum(?:\s+of)?|up\s+to|at\s+most)\s+(\d+)\s+words?/i);
+    if (max) maxWords = Number(max[1]) || 0;
+  }
+
+  if (!maxWords) {
+    const exact = prompt.match(/\b(?:in|exactly)\s+(\d+)\s+words?/i);
+    if (exact) {
+      minWords = Math.max(minWords, Number(exact[1]) || 0);
+      maxWords = Number(exact[1]) || 0;
+    }
+  }
+
+  return {
+    minWords: Math.max(0, minWords),
+    maxWords: Math.max(0, maxWords),
+  };
+}
+
+function stepExtV4BuildLongAnswer(_question, minWords, maxWords) {
+  // Restored v3 filler paragraph, padded or trimmed to the word limits.
+  let text = STEP_V4_LONG_ANSWER_FILLER;
+
+  const words = () => text.split(/\s+/).filter(Boolean);
+  let extra = 0;
+  while (words().length < minWords && extra < 20) {
+    text += ' ' + STEP_V4_LONG_ANSWER_FILLER;
+    extra++;
+  }
+
+  if (maxWords > 0 && words().length > maxWords) {
+    text = words().slice(0, maxWords).join(' ');
+  }
+
+  return text;
+}
+
+function stepExtV4FillTextarea(textarea, text) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+  textarea.focus();
+  if (setter) setter.call(textarea, text);
+  else textarea.value = text;
+
+  ['input', 'change', 'keydown', 'keypress', 'keyup', 'blur'].forEach(type => {
+    textarea.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
+  });
+}
+
+function stepExtV4HasQuestionInput() {
+  return !!document.querySelector('button.choice') ||
+    !!document.querySelector('[data-testid^="cloze-blank-"]') ||
+    !!stepExtV4GetWordBankContainer() ||
+    !!stepExtV4GetTextarea() ||
+    !!stepExtV4FindRecorderButton();
+}
+
+function stepExtV4WordBankTarget(span, question) {
+  const raw = (span?.dataset?.answerHint || span?.textContent || '').trim();
+  const cleaned = raw.replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
+  if (cleaned && !/awaiting api|answer not found|no fixed answer/i.test(cleaned)) {
+    return cleaned;
+  }
+
+  const answer = question?.answers?.[0] || '';
+  if (!answer) return '';
+
+  const resolved = stepExtV4ResolveChoiceLabel(question, answer);
+  return String(resolved?.text || answer).replace(/^[A-Za-z0-9]+\.\s*/, '').trim();
+}
+
+function stepExtV4GetFooterButton() {
+  return document.querySelector('footer.player-foot button') ||
+    document.querySelector('footer button');
+}
+
+function stepExtV4IsFeedbackVisible() {
+  const eyebrows = Array.from(document.querySelectorAll('.ds-eyebrow'))
+    .map(node => node.textContent.trim().toLowerCase());
+  if (eyebrows.some(text => text.startsWith('feedback'))) return true;
+
+  const footerLabel = (stepExtV4GetFooterButton()?.textContent || '').trim().toLowerCase();
+  return footerLabel.includes('next') || footerLabel.includes('continue');
+}
+
+async function stepExtV4DismissFeedbackIfPresent() {
+  if (!stepExtV4IsFeedbackVisible()) return false;
+
+  const footer = stepExtV4GetFooterButton();
+  const label = (footer?.textContent || '').trim().toLowerCase();
+  if (!footer || footer.disabled ||
+      (!label.includes('next') && !label.includes('continue'))) {
+    return false;
+  }
+
+  stepExtV4SafeClick(footer);
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await sleep(200);
+    if (!stepExtV4IsFeedbackVisible()) break;
+  }
+
+  stepExtLog('V4 feedback dismissed before solving.');
+  return true;
+}
+
+function stepExtV4SafeClick(element) {
+  if (!element) return;
+  ['mousedown', 'mouseup', 'click'].forEach(type => {
+    element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+  });
+  if (typeof element.focus === 'function') element.focus();
+}
+
+function stepExtV4SolveFinished() {
+  isSolving = false;
+  activeV4SolveToken = '';
+
+  if (!pendingV4Solve) return;
+  pendingV4Solve = false;
+  if (!AUTO_MODE_ENABLED) return;
+
+  stepExtLog('V4 starting the queued question.');
+  if (queuedV4Timer) clearTimeout(queuedV4Timer);
+  queuedV4Timer = setTimeout(() => {
+    queuedV4Timer = null;
+    autoSelectAnswer();
+  }, 250);
+}
+
+async function stepExtV4RecordVirtualTake() {
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const recorderLabel = () => (stepExtV4FindRecorderButton()?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  let button = stepExtV4FindRecorderButton();
+  if (!button) return true;
+  if (/re-record/i.test(button.textContent || '')) return true;
+
+  // The "Minimum recording: 00:02" label is only visible in the idle state.
+  const minLabel = document.body.textContent.match(/Minimum recording:\s*(\d+):(\d+)/i);
+  const minSeconds = minLabel ? Number(minLabel[1]) * 60 + Number(minLabel[2]) : 2;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (!/tap to record/i.test(recorderLabel())) {
+      await sleep(500);
+    }
+
+    const startButton = stepExtV4FindRecorderButton();
+    if (!startButton || !/tap to record/i.test(startButton.textContent || '')) {
+      return false;
+    }
+    if (startButton.disabled) return false;
+
+    stepExtV4SafeClick(startButton);
+
+    for (let wait = 0; wait < 40; wait++) {
+      await sleep(200);
+      if (/stop|saving/i.test(recorderLabel())) break;
+    }
+
+    window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'PLAY' }, '*');
+    await sleep(300);
+
+    const duration = Number.isFinite(VIRTUAL_AUDIO_DURATION) && VIRTUAL_AUDIO_DURATION > 0
+      ? VIRTUAL_AUDIO_DURATION
+      : 5;
+    // Only the recorder's minimum duration plus a buffer is needed. Capping at
+    // 3.2s saves the rest of the 4.3s clip without failing the duration check.
+    const waitSeconds = Math.max(minSeconds + 0.6, Math.min(duration + 0.8, 3.2));
+    await sleep(waitSeconds * 1000);
+
+    const stopButton = stepExtV4FindRecorderButton();
+    if (stopButton && /stop/i.test(stopButton.textContent || '')) {
+      stepExtV4SafeClick(stopButton);
+    }
+
+    for (let wait = 0; wait < 80; wait++) {
+      await sleep(250);
+      const current = recorderLabel();
+      if (/re-record/i.test(current)) {
+        window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'STOP' }, '*');
+        return true;
+      }
+      if (/try again/i.test(current)) {
+        stepExtV4SafeClick(stepExtV4FindRecorderButton());
+        await sleep(400);
+        break;
+      }
+      if (/tap to record/i.test(current)) break;
+    }
+
+    window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'STOP' }, '*');
+    await sleep(300);
+  }
+
+  return /re-record/i.test(recorderLabel());
+}
+
+// ── V4 SPEAKING / RECORD SOLVER ──────────────────────────────────────────────
+// The v4 recorder is react-audio-analyser based and still calls getUserMedia, so
+// inject.js can feed it the virtual mic stream. The controls are a single button
+// that cycles through Tap to record -> Stop -> Re-record.
+async function autoSelectAnswerV4Speaking(span) {
+  if (isSolving) {
+    stepExtLog('V4 speaking ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const getFooterButton = stepExtV4GetFooterButton;
+  const safeClick = stepExtV4SafeClick;
+  const recorderLabel = () => (stepExtV4FindRecorderButton()?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let button = stepExtV4FindRecorderButton();
+    for (let attempt = 0; attempt < 60 && !button; attempt++) {
+      await sleep(250);
+      button = stepExtV4FindRecorderButton();
+    }
+
+    if (!button) {
+      stepExtLog('V4 speaking: recorder UI never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    let recorded = /re-record/i.test(button.textContent || '');
+    let attempts = 0;
+
+    while (!recorded && attempts < 2) {
+      attempts++;
+
+      if (!/tap to record/i.test(recorderLabel())) {
+        await sleep(500);
+      }
+
+      const startButton = stepExtV4FindRecorderButton();
+      if (!startButton || !/tap to record/i.test(startButton.textContent || '')) {
+        stepExtLog('V4 speaking: record button not ready.', { label: recorderLabel() });
+        break;
+      }
+      if (startButton.disabled) {
+        stepExtLog('V4 speaking: no recording attempts remaining.');
+        break;
+      }
+
+      safeClick(startButton);
+
+      // Wait until the recorder actually starts capturing before feeding audio.
+      for (let wait = 0; wait < 40; wait++) {
+        await sleep(200);
+        if (/stop|saving/i.test(recorderLabel())) break;
+      }
+
+      window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'PLAY' }, '*');
+      await sleep(300);
+      const durationSeconds = Number.isFinite(VIRTUAL_AUDIO_DURATION) && VIRTUAL_AUDIO_DURATION > 0
+        ? VIRTUAL_AUDIO_DURATION
+        : 5;
+      const waitMs = Math.max(2.6, durationSeconds + 0.8) * 1000;
+      stepExtLog('V4 speaking: recording virtual audio for', waitMs, 'ms');
+      await sleep(waitMs);
+
+      const stopButton = stepExtV4FindRecorderButton();
+      if (stopButton && /stop/i.test(stopButton.textContent || '')) {
+        safeClick(stopButton);
+        stepExtLog('V4 speaking: stop clicked.');
+      }
+
+      // Encoding flips the control to Re-record on success, or to Try again
+      // after a failed take.
+      for (let wait = 0; wait < 80; wait++) {
+        await sleep(250);
+        const label = recorderLabel();
+        if (/re-record/i.test(label)) { recorded = true; break; }
+        if (/tap to record/i.test(label)) break;
+        if (/try again/i.test(label)) {
+          safeClick(stepExtV4FindRecorderButton());
+          await sleep(400);
+          break;
+        }
+      }
+
+      window.postMessage({ type: 'STEP_EXT_VIRTUAL_MIC', action: 'STOP' }, '*');
+
+      if (!recorded) {
+        stepExtLog('V4 speaking: take was not accepted, retrying.', {
+          attempt: attempts,
+          label: recorderLabel(),
+        });
+        for (let wait = 0; wait < 20 && !/tap to record/i.test(recorderLabel()); wait++) {
+          await sleep(250);
+        }
+        await sleep(300);
+      }
+    }
+
+    if (!recorded) {
+      stepExtLog('V4 speaking: no accepted recording after retries.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 80 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(250);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      stepExtLog('V4 speaking: submit stayed disabled after recording.', {
+        recorder: recorderLabel(),
+        footer: footerButton?.textContent?.trim() || null,
+      });
+      showStepErrorDialog('Recording did not enable Submit.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 speaking: submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') {
+          stepExtLog('V4 speaking: next question is ready; releasing the solve lock.');
+          break;
+        }
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 speaking: next clicked.');
+        break;
+      }
+      if (label === 'submit') {
+        stepExtLog('V4 speaking: feedback skipped; waiting for the next payload.');
+        break;
+      }
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
+// ── V4 LONG ANSWER / FILL PARAGRAPH SOLVER ─────────────────────────────────
+// LA questions render a textarea with a minimum word counter. Generate a
+// prompt-aware answer, fit it to the limits, and trigger React's input handler.
+async function autoSelectAnswerV4LongAnswer(span, question) {
+  if (isSolving) {
+    stepExtLog('V4 long answer ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const safeClick = stepExtV4SafeClick;
+  const getFooterButton = stepExtV4GetFooterButton;
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let textarea = stepExtV4GetTextarea();
+    for (let attempt = 0; attempt < 60 && !textarea; attempt++) {
+      await sleep(250);
+      textarea = stepExtV4GetTextarea();
+    }
+
+    if (!textarea) {
+      stepExtLog('V4 long answer: textarea never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    // Auto-Mode can be started before the API response for this question has
+    // been ingested. Wait for the LA model instead of generating the fallback.
+    let activeQuestion = question;
+    const hasLaModel = () => {
+      const current = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
+      if (!current?.questionText) return false;
+      return String(current.type || '').toUpperCase() === 'LA' ||
+        span.dataset.noFixedAnswer === 'true';
+    };
+
+    if (hasLaModel()) {
+      activeQuestion = STEP_EXT_RESPONSE_MODEL.questions[0];
+    } else {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        await sleep(250);
+        if (hasLaModel()) {
+          activeQuestion = STEP_EXT_RESPONSE_MODEL.questions[0];
+          break;
+        }
+      }
+    }
+
+    const limits = stepExtV4ReadWordLimit(activeQuestion);
+    const required = Math.max(1, limits.minWords || 20);
+    const maxWords = limits.maxWords > 0 && limits.maxWords >= required ? limits.maxWords : 0;
+    const answerText = stepExtV4BuildLongAnswer(activeQuestion, required, maxWords);
+    const wordCount = answerText.split(/\s+/).filter(Boolean).length;
+
+    stepExtLog('V4 long answer generated:', {
+      required,
+      maxWords,
+      wordCount,
+      answerText,
+    });
+
+    const overlay = span.closest('#getStepAnswerDialog');
+    const overlayLabel = overlay?.querySelector('strong');
+    if (overlayLabel && !stepExtV4IsFeedbackVisible()) {
+      overlayLabel.textContent = 'Long Answer:';
+    }
+
+    stepExtV4FillTextarea(textarea, answerText);
+    await sleep(800);
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 60 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      const counter = Array.from(document.querySelectorAll('div,span,p'))
+        .find(node => node.childElementCount === 0 &&
+          /\d+\s*\/\s*\d+\s*words?/i.test(node.textContent));
+      stepExtLog('V4 long answer: submit stayed disabled.', {
+        required,
+        valueLength: textarea.value.length,
+        counter: counter?.textContent?.trim() || null,
+      });
+
+      // Force a fresh change event in case React ignored the first fill.
+      stepExtV4FillTextarea(textarea, '');
+      await sleep(100);
+      stepExtV4FillTextarea(textarea, answerText);
+      await sleep(600);
+
+      for (let attempt = 0; attempt < 40 && (!footerButton || footerButton.disabled); attempt++) {
+        await sleep(200);
+        footerButton = getFooterButton();
+      }
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit did not enable after typing the answer.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 long answer submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') break;
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 long answer next clicked.');
+        break;
+      }
+      if (label === 'submit') break;
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
+// ── V4 FILL-IN-THE-BLANKS (CLOZE) SOLVER ────────────────────────────────────
+// Cloze questions render cloze-blank-N buttons inside the passage and a
+// distractor word bank. Tapping a chip fills the first empty blank.
+async function autoSelectAnswerV4Cloze(span, question) {
+  if (isSolving) {
+    stepExtLog('V4 cloze ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const normalize = value => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const superClean = value => normalize(value).replace(/[^a-z0-9]/g, '');
+  const safeClick = stepExtV4SafeClick;
+  const getFooterButton = stepExtV4GetFooterButton;
+
+  const targets = stepExtV4ClozeTargets(span, question);
+  if (!targets.length) {
+    stepExtLog('V4 cloze: no target words.');
+    span.dataset.processed = 'true';
+    return;
+  }
+
+  const getBlanks = () => Array.from(document.querySelectorAll('[data-testid^="cloze-blank-"]'));
+  const blankText = blank => (blank?.textContent || '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const getChipContainer = () => {
+    const reset = Array.from(document.querySelectorAll('button'))
+      .find(button => button.textContent.trim().toLowerCase() === 'reset');
+    if (reset?.previousElementSibling) return reset.previousElementSibling;
+    return document.querySelector('.q-stim')?.nextElementSibling || null;
+  };
+  const getChips = () => {
+    const container = getChipContainer();
+    return container ? Array.from(container.querySelectorAll('button')) : [];
+  };
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let blanks = [];
+    for (let attempt = 0; attempt < 60; attempt++) {
+      blanks = getBlanks();
+      if (blanks.length) break;
+      await sleep(250);
+    }
+
+    if (!blanks.length) {
+      stepExtLog('V4 cloze: blanks never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    if (targets.length !== blanks.length) {
+      stepExtLog('V4 cloze: target count does not match blank count.', {
+        targets,
+        blanks: blanks.length,
+      });
+      showStepErrorDialog('Fill-blanks answer count does not match.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    const current = blanks.map(blankText);
+    if (current.some(Boolean) && current.join('|') !== targets.join('|')) {
+      const reset = Array.from(document.querySelectorAll('button'))
+        .find(button => button.textContent.trim().toLowerCase() === 'reset');
+      if (reset) {
+        safeClick(reset);
+        await sleep(350);
+      }
+    }
+
+    for (let index = 0; index < targets.length; index++) {
+      blanks = getBlanks();
+      if (normalize(blankText(blanks[index])) === normalize(targets[index])) continue;
+
+      const chip = getChips().find(button => {
+        const text = button.textContent.trim();
+        return normalize(text) === normalize(targets[index]) ||
+          superClean(text) === superClean(targets[index]);
+      });
+
+      if (!chip) {
+        stepExtLog('V4 cloze: no chip for target word.', {
+          target: targets[index],
+          chips: getChips().map(button => button.textContent.trim()),
+        });
+        break;
+      }
+
+      safeClick(chip);
+      await sleep(180);
+    }
+
+    blanks = getBlanks();
+    const built = blanks.map(blankText);
+    stepExtLog('V4 cloze built:', { targets, built });
+    if (built.length !== targets.length ||
+        built.some((text, index) => normalize(text) !== normalize(targets[index]))) {
+      showStepErrorDialog('Fill-blanks answer did not match.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    // The cloze component asks for the completed passage to be read aloud.
+    let recorder = stepExtV4FindRecorderButton();
+    for (let attempt = 0; attempt < 8 && !recorder; attempt++) {
+      await sleep(150);
+      recorder = stepExtV4FindRecorderButton();
+    }
+    if (recorder) {
+      const recorded = await stepExtV4RecordVirtualTake();
+      if (!recorded) {
+        stepExtLog('V4 cloze: recording was not accepted.');
+        showStepErrorDialog('Fill-blanks recording was not accepted.');
+        span.dataset.processed = 'true';
+        return;
+      }
+    }
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 60 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit button did not enable after filling the blanks.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 cloze submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') break;
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 cloze next clicked.');
+        break;
+      }
+      if (label === 'submit') break;
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
+// ── V4 WORD BANK SOLVER ──────────────────────────────────────────────────────
+// Word bank questions render shuffled chip buttons plus a "Your sentence"
+// target. Some lessons also require a recording after the sentence is built.
+async function autoSelectAnswerV4WordBank(span, question) {
+  if (isSolving) {
+    stepExtLog('V4 word bank ignored because another solve is already running.');
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const normalize = value => String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const superClean = value => normalize(value).replace(/[^a-z0-9]/g, '');
+  const safeClick = stepExtV4SafeClick;
+  const getFooterButton = stepExtV4GetFooterButton;
+
+  const target = stepExtV4WordBankTarget(span, question);
+  if (!target) {
+    stepExtLog('V4 word bank: no target sentence.');
+    span.dataset.processed = 'true';
+    return;
+  }
+
+  const getBankButtons = () => {
+    const container = stepExtV4GetWordBankContainer();
+    return container ? Array.from(container.querySelectorAll('button')) : [];
+  };
+  const getSentenceText = () => {
+    const placed = Array.from(document.querySelectorAll('[data-testid^="placed-"]'))
+      .map(node => node.textContent.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    if (placed.length) return placed.join(' ');
+    const container = stepExtV4GetSentenceContainer();
+    return (container?.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  const findChip = (buttons, remaining) => {
+    const normalizedRemaining = normalize(remaining);
+    const cleanRemaining = superClean(remaining);
+    let best = null;
+
+    for (const button of buttons) {
+      const text = button.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+
+      const normalizedText = normalize(text);
+      const cleanText = superClean(text);
+      if (!normalizedText || !cleanText) continue;
+
+      let consumed = 0;
+      if (normalizedRemaining.startsWith(normalizedText)) {
+        consumed = text.length;
+      } else if (cleanRemaining.startsWith(cleanText)) {
+        const wordCount = text.split(/\s+/).length;
+        consumed = remaining.split(/\s+/).slice(0, wordCount).join(' ').length;
+      }
+
+      if (!consumed) continue;
+
+      const score = cleanText.length;
+      if (!best || score > best.score) {
+        best = { button, text, consumed, score };
+      }
+    }
+
+    return best;
+  };
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    let bank = [];
+    for (let attempt = 0; attempt < 60; attempt++) {
+      bank = getBankButtons();
+      if (bank.length) break;
+      await sleep(250);
+    }
+
+    if (!bank.length) {
+      stepExtLog('V4 word bank: chips never appeared.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    const targetNorm = superClean(target);
+    const current = getSentenceText();
+    if (superClean(current) !== targetNorm && !/tap chips below/i.test(current)) {
+      const reset = Array.from(document.querySelectorAll('button'))
+        .find(button => button.textContent.trim().toLowerCase() === 'reset');
+      if (reset) {
+        safeClick(reset);
+        await sleep(350);
+      }
+    }
+
+    let remaining = target.replace(/\s+/g, ' ').trim();
+    const clicked = [];
+
+    for (let step = 0; step < 40 && remaining; step++) {
+      bank = getBankButtons();
+      if (!bank.length) break;
+
+      const match = findChip(bank, remaining);
+      if (!match) {
+        stepExtLog('V4 word bank: no chip matches the next part.', {
+          remaining,
+          bank: bank.map(button => button.textContent.trim()),
+        });
+        break;
+      }
+
+      safeClick(match.button);
+      clicked.push(match.text);
+      remaining = remaining.slice(match.consumed).trim();
+      await sleep(180);
+    }
+
+    const built = getSentenceText();
+    stepExtLog('V4 word bank built:', { target, built, clicked });
+    if (superClean(built) !== targetNorm) {
+      showStepErrorDialog('Word bank sentence did not match.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    // Domain S word banks ask for the sentence to be recorded after it is built.
+    // The recorder renders immediately when required, so do not block for 5s
+    // on pages that do not have one.
+    let recorder = stepExtV4FindRecorderButton();
+    for (let attempt = 0; attempt < 8 && !recorder; attempt++) {
+      await sleep(150);
+      recorder = stepExtV4FindRecorderButton();
+    }
+    if (recorder) {
+      const recorded = await stepExtV4RecordVirtualTake();
+      if (!recorded) {
+        stepExtLog('V4 word bank: recording was not accepted.');
+        showStepErrorDialog('Word bank recording was not accepted.');
+        span.dataset.processed = 'true';
+        return;
+      }
+    }
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 60 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit button did not enable after building the sentence.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 word bank submit clicked.');
+
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 12000) {
+      await sleep(200);
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') break;
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 word bank next clicked.');
+        break;
+      }
+      if (label === 'submit') break;
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
+// ── V4 SINGLE / MULTI CHOICE SOLVER ──────────────────────────────────────────
+// v4 renders choices as button.choice elements and a single footer button that
+// reads Submit, then Next -> after feedback. There is no #testSubmit anymore.
+async function autoSelectAnswerV4() {
+  if (isSolving) {
+    stepExtLog('V4 auto-select ignored because another solve is already running.');
+    return;
+  }
+
+  const overlay = document.getElementById('getStepAnswerDialog') || stepExtEnsureOverlay();
+  const span = overlay?.querySelector('span');
+  if (!span) return;
+
+  // A normal observer trigger or a manual click means the queued retry is no
+  // longer needed.
+  if (queuedV4Timer) {
+    clearTimeout(queuedV4Timer);
+    queuedV4Timer = null;
+  }
+
+  // Starting Auto-Mode or Manual Auto-Select while a feedback card is open
+  // used to do nothing because the card has no clickable answers. Clear the
+  // feedback first, then solve the question that is now loaded.
+  await stepExtV4DismissFeedbackIfPresent();
+
+  // Once the feedback card is gone, the answer shown belongs to the question
+  // that is now on screen.
+  if (!stepExtV4IsFeedbackVisible() && span.dataset.answerHint) {
+    const label = overlay.querySelector('strong');
+    if (label) label.textContent = 'Correct Answer:';
+  }
+
+  // Video-confirmation steps have no answer widgets, just an enabled footer
+  // that advances the lesson. Ignore the synthetic "Next" answer and click it.
+  if (!stepExtV4HasQuestionInput()) {
+    const footer = stepExtV4GetFooterButton();
+    const footerLabel = (footer?.textContent || '').trim().toLowerCase();
+    if (footer && !footer.disabled &&
+        (footerLabel === 'submit' || footerLabel.includes('next') || footerLabel.includes('continue'))) {
+      const overlayLabel = overlay.querySelector('strong');
+      if (overlayLabel) overlayLabel.textContent = 'Confirmation:';
+      span.textContent = 'Click the footer to continue.';
+      stepExtLog('V4 confirmation page: clicking the footer button.', { label: footerLabel });
+      stepExtV4SafeClick(footer);
+      span.dataset.processed = 'true';
+      return;
+    }
+  }
+
+  span.dataset.processed = 'true';
+
+  const question = STEP_EXT_RESPONSE_MODEL?.questions?.[0];
+
+  if (isStepV4ClozeQuestion(question)) {
+    return autoSelectAnswerV4Cloze(span, question);
+  }
+
+  if (isStepV4WordBankQuestion(question)) {
+    return autoSelectAnswerV4WordBank(span, question);
+  }
+
+  if (isStepV4LongAnswerQuestion(question)) {
+    return autoSelectAnswerV4LongAnswer(span, question);
+  }
+
+  if (isStepV4SpeakingQuestion(question)) {
+    return autoSelectAnswerV4Speaking(span);
+  }
+
+  let expectedAnswers = Array.isArray(question?.answers) ? question.answers.slice() : [];
+  const visibleAnswer = span.textContent.trim();
+  const isPlaceholder = !visibleAnswer ||
+    visibleAnswer === '...' ||
+    visibleAnswer === 'Awaiting API...' ||
+    visibleAnswer === 'Answer not found in API response.' ||
+    visibleAnswer.startsWith('No answer found') ||
+    visibleAnswer.startsWith('No fixed answer');
+
+  if (!expectedAnswers.length && !isPlaceholder && !span.dataset.noFixedAnswer) {
+    // Fall back to the rendered overlay text if the model could not be built.
+    expectedAnswers = visibleAnswer.split(/[|#]/).map(value => value.trim()).filter(Boolean);
+  }
+
+  if (!expectedAnswers.length || isPlaceholder) {
+    stepExtLog('V4 waiting for answer data...', { visibleAnswer, expectedAnswers });
+    span.dataset.processed = 'true';
+    return;
+  }
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const normalize = value => String(value ?? '').trim().toLowerCase();
+  const superClean = value => normalize(value).replace(/[^a-z0-9]/g, '');
+  const getFooterButton = stepExtV4GetFooterButton;
+  const safeClick = stepExtV4SafeClick;
+  const getVisibleChoices = () => Array.from(document.querySelectorAll('button.choice'))
+    .filter(button => button.offsetParent !== null);
+  const buildChoiceInfo = buttons => buttons.map(button => ({
+    button,
+    text: stepExtV4ChoiceText(button),
+    key: (button.querySelector('.key')?.textContent || '').replace(/[^A-Za-z]/g, ''),
+    selected: button.classList.contains('is-selected') ||
+      button.getAttribute('aria-pressed') === 'true',
+  }));
+  const matchesAnswer = (choice, answer) => {
+    const resolved = stepExtV4ResolveChoiceLabel(question, answer);
+    const answerText = String(answer ?? '').trim();
+    const resolvedText = String(resolved?.text ?? '').trim();
+    const choiceText = String(choice.text ?? '').trim();
+
+    // A letter alone is not enough: the previous question can still be in the
+    // DOM during a route transition and its A/B/C/D keys would match.
+    if (choiceText) {
+      if (answerText &&
+          (normalize(choiceText) === normalize(answerText) ||
+           superClean(choiceText) === superClean(answerText))) {
+        return true;
+      }
+      if (resolvedText &&
+          (normalize(choiceText) === normalize(resolvedText) ||
+           superClean(choiceText) === superClean(resolvedText))) {
+        return true;
+      }
+      return false;
+    }
+
+    // Image-only choices have no text, so fall back to the key mapping.
+    const candidates = [answerText, resolved?.key, resolved?.displayKey].filter(Boolean);
+    const choiceKey = normalize(choice.key);
+    return !!choiceKey && candidates.some(candidate => choiceKey === normalize(candidate));
+  };
+  const allAnswersPresent = () => {
+    const choices = buildChoiceInfo(getVisibleChoices());
+    if (!choices.length) return false;
+    return expectedAnswers.every(answer => choices.some(choice => matchesAnswer(choice, answer)));
+  };
+
+  isSolving = true;
+  activeV4SolveToken = lastV4AnswerToken;
+  try {
+    // Wait for the SPA to settle on this question. During a question
+    // transition the previous question's choices can still be in the DOM,
+    // which is what tripped the submit guardrail on multi-select questions.
+    await sleep(AUTO_SELECT_DELAY_MS);
+
+    let ready = false;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      if (allAnswersPresent()) { ready = true; break; }
+      await sleep(250);
+    }
+
+    if (!ready) {
+      const choices = buildChoiceInfo(getVisibleChoices());
+      stepExtLog('V4 choices never matched the API answers.', {
+        expectedAnswers,
+        choices: choices.map(choice => ({ key: choice.key, text: choice.text })),
+      });
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    const choiceInfo = buildChoiceInfo(getVisibleChoices());
+    const targets = [];
+    for (const answer of expectedAnswers) {
+      const match = choiceInfo.find(choice =>
+        !targets.includes(choice) && matchesAnswer(choice, answer)
+      );
+      if (match) targets.push(match);
+    }
+
+    if (!targets.length) {
+      stepExtLog('V4 answer could not be matched to a choice.', {
+        expectedAnswers,
+        choices: choiceInfo.map(choice => ({ key: choice.key, text: choice.text })),
+      });
+      showStepErrorDialog('Could not match the API answer to a choice.');
+      span.dataset.processed = 'true';
+      return;
+    }
+
+    for (const target of targets) {
+      if (target.selected) continue;
+      safeClick(target.button);
+      await sleep(250);
+
+      // React can replace the node on re-render, so verify and retry once.
+      if (!target.button.classList.contains('is-selected') &&
+          target.button.getAttribute('aria-pressed') !== 'true') {
+        const fresh = buildChoiceInfo(getVisibleChoices()).find(choice =>
+          (normalize(choice.text) && normalize(choice.text) === normalize(target.text)) ||
+          (normalize(choice.key) && normalize(choice.key) === normalize(target.key))
+        );
+        if (fresh && !fresh.selected) {
+          safeClick(fresh.button);
+          await sleep(250);
+        }
+      }
+    }
+
+    span.dataset.processed = 'true';
+    stepExtLog('V4 choices selected:', targets.map(target => target.text));
+
+    await sleep(AUTO_SUBMIT_DELAY_MS);
+
+    let footerButton = getFooterButton();
+    for (let attempt = 0; attempt < 40 && (!footerButton || footerButton.disabled); attempt++) {
+      await sleep(200);
+      footerButton = getFooterButton();
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      // One retry for clicks lost during a re-render, then keep the guardrail.
+      const refreshed = buildChoiceInfo(getVisibleChoices());
+      for (const choice of refreshed) {
+        if (choice.selected) continue;
+        if (expectedAnswers.some(answer => matchesAnswer(choice, answer))) {
+          safeClick(choice.button);
+          await sleep(200);
+        }
+      }
+      for (let attempt = 0; attempt < 30 && (!footerButton || footerButton.disabled); attempt++) {
+        await sleep(200);
+        footerButton = getFooterButton();
+      }
+      stepExtLog('V4 submit readiness after retry:', {
+        enabled: !!footerButton && !footerButton.disabled,
+        selected: buildChoiceInfo(getVisibleChoices())
+          .filter(choice => choice.selected)
+          .map(choice => choice.key),
+      });
+    }
+
+    if (!footerButton || footerButton.disabled) {
+      if (AUTO_MODE_ENABLED) {
+        AUTO_MODE_ENABLED = false;
+        syncUI();
+      }
+      showStepErrorDialog('Submit button did not enable after selecting.');
+      return;
+    }
+
+    safeClick(footerButton);
+    stepExtLog('V4 submit clicked.');
+
+    // Feedback mode turns the footer into "Next ->". Without feedback the app
+    // jumps straight to the next question and the next payload triggers us.
+    const submitAt = Date.now();
+    while (Date.now() - submitAt < 10000) {
+      await sleep(200);
+
+      const candidate = getFooterButton();
+      if (!candidate) continue;
+      const label = candidate.textContent.trim().toLowerCase();
+
+      if (candidate.disabled) {
+        if (label === 'submit') {
+          stepExtLog('V4 next question is ready; releasing the solve lock.');
+          break;
+        }
+        continue;
+      }
+
+      if (label.includes('next') || label.includes('continue')) {
+        safeClick(candidate);
+        stepExtLog('V4 next clicked.');
+        break;
+      }
+      if (label === 'submit') {
+        stepExtLog('V4 feedback skipped; waiting for the next question payload.');
+        break;
+      }
+    }
+  } finally {
+    stepExtV4SolveFinished();
+  }
+}
+
 // (message handling consolidated into the listener above)
 
 // ── OVERLAY UI AND AUTO-MODE LOOP ────────────────────────────────────────────
@@ -920,7 +2369,13 @@ const _stepExtObserver = new MutationObserver(() => {
       pausedByStepError = false; // manual toggle clears any previous pause
       syncUI();
       console.log('[StepExt] Auto-Mode changed to:', AUTO_MODE_ENABLED);
-      if (AUTO_MODE_ENABLED) autoSelectAnswer();
+      if (!AUTO_MODE_ENABLED) return;
+      if (isStepV4LessonPage() && isSolving) {
+        pendingV4Solve = true;
+        stepExtLog('V4 auto-mode enable queued behind the active solve.');
+        return;
+      }
+      autoSelectAnswer();
     };
     overlay.appendChild(toggleBtn);
     syncUI(); // initial state
@@ -934,6 +2389,11 @@ const _stepExtObserver = new MutationObserver(() => {
     autoBtn.style.cssText = 'display:block; margin-top:6px; padding:3px 10px; font-size:12px; cursor:pointer; background:#0d6efd; color:#fff; border:none; border-radius:4px; width:100%;';
     autoBtn.onclick = (e) => {
       e.stopPropagation();
+      if (isStepV4LessonPage() && isSolving) {
+        pendingV4Solve = true;
+        stepExtLog('V4 manual request queued behind the active solve.');
+        return;
+      }
       autoSelectAnswer();
     };
     overlay.appendChild(autoBtn);
@@ -960,6 +2420,14 @@ const _stepExtObserver = new MutationObserver(() => {
 
   // Only trigger if a new answer span is present and mode is ON
   if (AUTO_MODE_ENABLED && span.dataset.processed !== 'true') {
+    if (isStepV4LessonPage() && isSolving) {
+      if (lastV4AnswerToken && lastV4AnswerToken !== activeV4SolveToken) {
+        pendingV4Solve = true;
+        stepExtLog('V4 new question arrived while solving; queued it.');
+      }
+      return;
+    }
+
     span.dataset.processed = 'true';
     if (!validationError) span.dataset.retryAttempted = 'false'; // reset if it's potentially a new question
     console.log('[StepExt] Autonomous trigger: new question detected.');
@@ -975,3 +2443,11 @@ try {
     attributeFilter: ['style', 'class']
   });
 } catch (_) {}
+
+// The legacy snippet installs window.onclick to look for #testSubmit, which
+// logs on every click in the v4 player. It is not used there.
+if (isStepV4LessonPage()) {
+  try {
+    window.onclick = null;
+  } catch (_) {}
+}
