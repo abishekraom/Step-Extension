@@ -1172,6 +1172,28 @@ function stepExtV4IsFeedbackVisible() {
   return footerLabel.includes('next') || footerLabel.includes('continue');
 }
 
+async function stepExtV4DismissFeedbackIfPresent() {
+  if (!stepExtV4IsFeedbackVisible()) return false;
+
+  const footer = stepExtV4GetFooterButton();
+  const label = (footer?.textContent || '').trim().toLowerCase();
+  if (!footer || footer.disabled ||
+      (!label.includes('next') && !label.includes('continue'))) {
+    return false;
+  }
+
+  stepExtV4SafeClick(footer);
+
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  for (let attempt = 0; attempt < 40; attempt++) {
+    await sleep(200);
+    if (!stepExtV4IsFeedbackVisible()) break;
+  }
+
+  stepExtLog('V4 feedback dismissed before solving.');
+  return true;
+}
+
 function stepExtV4SafeClick(element) {
   if (!element) return;
   ['mousedown', 'mouseup', 'click'].forEach(type => {
@@ -1619,6 +1641,11 @@ async function autoSelectAnswerV4() {
     clearTimeout(queuedV4Timer);
     queuedV4Timer = null;
   }
+
+  // Starting Auto-Mode or Manual Auto-Select while a feedback card is open
+  // used to do nothing because the card has no clickable answers. Clear the
+  // feedback first, then solve the question that is now loaded.
+  await stepExtV4DismissFeedbackIfPresent();
 
   // Once the feedback card is gone, the answer shown belongs to the question
   // that is now on screen.
