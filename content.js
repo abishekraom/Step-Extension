@@ -10,12 +10,7 @@ let pendingV4Solve = false;
 let activeV4SolveToken = '';
 let queuedV4Timer = null;
 
-const STEP_V4_NEUTRAL_SENTENCES = [
-  'The picture shows a comfortable room with several useful objects arranged neatly.',
-  'The main furniture is placed in the center, while smaller items are kept around it so that the room remains easy to use.',
-  'The lighting makes the space look bright and welcoming.',
-  'It appears clean, organized, practical, and suitable for everyday activities and relaxation.',
-];
+const STEP_V4_LONG_ANSWER_FILLER = 'bing bong ding dong unga bunga go go ha ha lelo rvce gay iptc magic words fly high chicken dinner victory royale skibidi toilet rizzler gyatt sigma fanum tax over the moon under the sea across the galaxy into the void where shadows dance and pixels play for a thousand years of pure chaos in the matrix of destiny with tacos and lasers for everyone forever and ever amen hallelujah it works like magic boom shackalacka';
 
 
 
@@ -1237,13 +1232,13 @@ function stepExtV4ReadWordLimit(question) {
 }
 
 function stepExtV4BuildLongAnswer(_question, minWords, maxWords) {
-  // Use the prepared neutral paragraph, padded or trimmed to the word limits.
-  let text = STEP_V4_NEUTRAL_SENTENCES.join(' ');
+  // Restored v3 filler paragraph, padded or trimmed to the word limits.
+  let text = STEP_V4_LONG_ANSWER_FILLER;
 
   const words = () => text.split(/\s+/).filter(Boolean);
   let extra = 0;
   while (words().length < minWords && extra < 20) {
-    text += ' ' + STEP_V4_NEUTRAL_SENTENCES[extra % STEP_V4_NEUTRAL_SENTENCES.length];
+    text += ' ' + STEP_V4_LONG_ANSWER_FILLER;
     extra++;
   }
 
