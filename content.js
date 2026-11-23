@@ -1344,6 +1344,10 @@ async function stepExtV4RecordVirtualTake() {
   if (!button) return true;
   if (/re-record/i.test(button.textContent || '')) return true;
 
+  // The "Minimum recording: 00:02" label is only visible in the idle state.
+  const minLabel = document.body.textContent.match(/Minimum recording:\s*(\d+):(\d+)/i);
+  const minSeconds = minLabel ? Number(minLabel[1]) * 60 + Number(minLabel[2]) : 2;
+
   for (let attempt = 0; attempt < 2; attempt++) {
     if (!/tap to record/i.test(recorderLabel())) {
       await sleep(500);
@@ -1368,7 +1372,10 @@ async function stepExtV4RecordVirtualTake() {
     const duration = Number.isFinite(VIRTUAL_AUDIO_DURATION) && VIRTUAL_AUDIO_DURATION > 0
       ? VIRTUAL_AUDIO_DURATION
       : 5;
-    await sleep(Math.max(2.6, duration + 0.8) * 1000);
+    // Only the recorder's minimum duration plus a buffer is needed. Capping at
+    // 3.2s saves the rest of the 4.3s clip without failing the duration check.
+    const waitSeconds = Math.max(minSeconds + 0.6, Math.min(duration + 0.8, 3.2));
+    await sleep(waitSeconds * 1000);
 
     const stopButton = stepExtV4FindRecorderButton();
     if (stopButton && /stop/i.test(stopButton.textContent || '')) {
@@ -1786,7 +1793,7 @@ async function autoSelectAnswerV4Cloze(span, question) {
       }
 
       safeClick(chip);
-      await sleep(300);
+      await sleep(180);
     }
 
     blanks = getBlanks();
@@ -1801,8 +1808,8 @@ async function autoSelectAnswerV4Cloze(span, question) {
 
     // The cloze component asks for the completed passage to be read aloud.
     let recorder = stepExtV4FindRecorderButton();
-    for (let attempt = 0; attempt < 20 && !recorder; attempt++) {
-      await sleep(250);
+    for (let attempt = 0; attempt < 8 && !recorder; attempt++) {
+      await sleep(150);
       recorder = stepExtV4FindRecorderButton();
     }
     if (recorder) {
@@ -1970,7 +1977,7 @@ async function autoSelectAnswerV4WordBank(span, question) {
       safeClick(match.button);
       clicked.push(match.text);
       remaining = remaining.slice(match.consumed).trim();
-      await sleep(300);
+      await sleep(180);
     }
 
     const built = getSentenceText();
@@ -1982,9 +1989,11 @@ async function autoSelectAnswerV4WordBank(span, question) {
     }
 
     // Domain S word banks ask for the sentence to be recorded after it is built.
+    // The recorder renders immediately when required, so do not block for 5s
+    // on pages that do not have one.
     let recorder = stepExtV4FindRecorderButton();
-    for (let attempt = 0; attempt < 20 && !recorder; attempt++) {
-      await sleep(250);
+    for (let attempt = 0; attempt < 8 && !recorder; attempt++) {
+      await sleep(150);
       recorder = stepExtV4FindRecorderButton();
     }
     if (recorder) {
